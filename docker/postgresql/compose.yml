@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stock_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-stock}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockpass}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stock} -d ${POSTGRES_DB:-stock_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - stock_platform_net
+
+networks:
+  stock_platform_net:
+    name: stock-platform-net
+
+volumes:
+  postgres_data:
+    name: stock-platform-postgres-data

@@ -1,0 +1,14 @@
+services:
+  postgres:
+    container_name: stock-platform-postgres-test
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stock_platform_test}
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+
+volumes:
+  postgres_data_test:
+    name: stock-platform-postgres-data-test
+

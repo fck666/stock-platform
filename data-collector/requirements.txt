@@ -1,0 +1,8 @@
+requests
+beautifulsoup4
+pandas
+openpyxl
+yfinance
+pandas_datareader
+python-dotenv
+psycopg2-binary
