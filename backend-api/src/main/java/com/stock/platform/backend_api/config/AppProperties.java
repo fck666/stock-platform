@@ -10,7 +10,6 @@ public record AppProperties(
     public record Cors(String allowedOrigins) {
     }
 
-    public record DataCollector(String workingDir, String pythonPath) {
+    public record DataCollector(boolean enabled, String workingDir, String pythonPath) {
     }
 }
-

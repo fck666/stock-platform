@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/stock_platform}
+    username: ${SPRING_DATASOURCE_USERNAME:stock}
+    password: ${SPRING_DATASOURCE_PASSWORD:change_me}
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  data-collector:
+    enabled: ${DATA_COLLECTOR_ENABLED:true}
+    working-dir: ${DATA_COLLECTOR_WORKING_DIR:/opt/data-collector}
+    python-path: ${DATA_COLLECTOR_PYTHON_PATH:/opt/data-collector/venv/bin/python}
+

@@ -1,0 +1,36 @@
+services:
+  backend-api:
+    build:
+      context: ../..
+      dockerfile: backend-api/Dockerfile
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://stock-platform-postgres:5432/stock_platform}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-stock}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-change_me}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      DATA_COLLECTOR_ENABLED: ${DATA_COLLECTOR_ENABLED:-true}
+      DATA_COLLECTOR_WORKING_DIR: ${DATA_COLLECTOR_WORKING_DIR:-/opt/data-collector}
+      DATA_COLLECTOR_PYTHON_PATH: ${DATA_COLLECTOR_PYTHON_PATH:-/opt/data-collector/venv/bin/python}
+      TZ: ${TZ:-Asia/Shanghai}
+    networks:
+      - stock_platform_net
+
+  frontend-web:
+    build:
+      context: ../..
+      dockerfile: frontend-web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8089}:80"
+    depends_on:
+      - backend-api
+    networks:
+      - stock_platform_net
+
+networks:
+  stock_platform_net:
+    external: true
+    name: stock-platform-net
+

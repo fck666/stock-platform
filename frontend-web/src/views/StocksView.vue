@@ -79,7 +79,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16">
+  <el-space direction="vertical" style="width: 100%" :size="16" fill>
     <el-card shadow="never" style="border-radius: 12px">
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div>
@@ -110,7 +110,7 @@ onMounted(() => {
         :data="rows"
         row-key="symbol"
         style="width: 100%"
-        height="640"
+        max-height="calc(100vh - 290px)"
         @selection-change="onSelectionChange"
       >
         <el-table-column type="selection" width="44" />

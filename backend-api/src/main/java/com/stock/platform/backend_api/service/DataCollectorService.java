@@ -83,6 +83,12 @@ public class DataCollectorService {
     }
 
     private SyncJobDto startJob(List<String> scriptArgs) {
+        AppProperties.DataCollector dc = appProperties.dataCollector();
+        boolean enabled = dc != null && dc.enabled();
+        if (!enabled) {
+            throw new IllegalStateException("Data collector sync is disabled");
+        }
+
         String jobId = UUID.randomUUID().toString();
         Job job = new Job(jobId);
         jobs.put(jobId, job);
@@ -96,7 +102,11 @@ public class DataCollectorService {
         job.startedAt = Instant.now();
 
         try {
-            String workingDir = appProperties.dataCollector() != null ? appProperties.dataCollector().workingDir() : "../data-collector";
+            AppProperties.DataCollector dc = appProperties.dataCollector();
+            String workingDir = dc != null ? dc.workingDir() : null;
+            if (workingDir == null || workingDir.isBlank()) {
+                throw new IllegalStateException("DATA_COLLECTOR_WORKING_DIR is not configured");
+            }
             String pythonPath = resolvePythonPath(workingDir);
 
             List<String> cmd = new ArrayList<>();
@@ -197,4 +207,3 @@ public class DataCollectorService {
         }
     }
 }
-
