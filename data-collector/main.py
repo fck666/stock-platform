@@ -6,10 +6,12 @@ import os
 from config.settings import load_settings
 from services.full_sync import run_full_sync
 from services.db_sync import (
+    sync_indices_prices_to_db,
     sync_sp500_daily_incremental,
     sync_sp500_prices_to_db,
     sync_sp500_wiki_to_db,
 )
+from utils.date_utils import yesterday_ymd
 from utils.logger import setup_logging
 
 
@@ -59,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--limit", type=int, default=None)
     daily.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
     daily.add_argument("--no-indices", action="store_true", default=False)
+
+    indices = sub.add_parser("db-sync-indices")
+    indices.add_argument("--db-dsn", default=None)
+    indices.add_argument("--start", dest="start_date", default="2016-01-01", help="YYYY-MM-DD")
+    indices.add_argument("--end", dest="end_date", default=None, help="YYYY-MM-DD")
+    indices.add_argument("--interval", default="1d", choices=["1d", "1w", "1m", "1q", "1y"])
 
     return p
 
@@ -135,6 +143,20 @@ def main() -> int:
             http_timeout_seconds=settings.http_timeout_seconds,
             user_agent=settings.user_agent,
             include_indices=not args.no_indices,
+        )
+        return 0
+
+    if args.command == "db-sync-indices":
+        db_dsn = args.db_dsn or settings.db_dsn
+        if not db_dsn:
+            raise RuntimeError("DB_DSN is not configured")
+        sync_indices_prices_to_db(
+            db_dsn=db_dsn,
+            start_date=args.start_date,
+            end_date=args.end_date or yesterday_ymd(),
+            interval=args.interval,
+            http_timeout_seconds=settings.http_timeout_seconds,
+            user_agent=settings.user_agent,
         )
         return 0
 

@@ -38,5 +38,9 @@ Thumbs.db
 
 data-collector/output/
 
+**/node_modules/
+**/dist/
+**/.vite/
+
 **/target/
 **/build/

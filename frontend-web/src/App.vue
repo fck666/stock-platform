@@ -1,30 +1,31 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+const route = useRoute()
+const router = useRouter()
+
+const active = computed(() => {
+  if (route.path.startsWith('/stocks')) return '/stocks'
+  return '/'
+})
+
+function handleSelect(index: string) {
+  router.push(index)
+}
 </script>
 
 <template>
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://vuejs.org/" target="_blank">
-      <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-    </a>
-  </div>
-  <HelloWorld msg="Vite + Vue" />
+  <el-container style="min-height: 100vh">
+    <el-header style="display: flex; align-items: center; gap: 16px">
+      <div style="font-weight: 700; font-size: 16px">Stock Platform</div>
+      <el-menu mode="horizontal" :default-active="active" @select="handleSelect" style="flex: 1">
+        <el-menu-item index="/">首页</el-menu-item>
+        <el-menu-item index="/stocks">股票列表</el-menu-item>
+      </el-menu>
+    </el-header>
+    <el-main style="padding: 16px; background: #f6f7fb">
+      <router-view />
+    </el-main>
+  </el-container>
 </template>
-
-<style scoped>
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
-}
-</style>
