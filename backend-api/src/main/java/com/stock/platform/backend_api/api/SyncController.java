@@ -37,6 +37,11 @@ public class SyncController {
         return dataCollectorService.startSyncWiki(index.toUpperCase());
     }
 
+    @PostMapping("/fundamentals")
+    public SyncJobDto syncFundamentals(@RequestParam(defaultValue = "^SPX") String index) {
+        return dataCollectorService.startSyncFundamentals(index.toUpperCase());
+    }
+
     @PostMapping("/prices")
     public SyncJobDto syncPrices(@RequestParam(defaultValue = "^SPX") String index) {
         String indexSymbol = index.toUpperCase();
@@ -76,4 +81,3 @@ public class SyncController {
         return dataCollectorService.getJob(jobId);
     }
 }
-

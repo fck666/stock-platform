@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { syncWiki, syncPrices, syncStocks, getSyncJob, type SyncJobDto } from '../api/market'
+import { syncWiki, syncFundamentals, syncPrices, syncStocks, getSyncJob, type SyncJobDto } from '../api/market'
 
 const activeJobs = ref<SyncJobDto[]>([])
 const finishedJobs = ref<SyncJobDto[]>([])
@@ -24,10 +24,6 @@ async function startJob(action: () => Promise<SyncJobDto>) {
   }
 }
 
-async function handleSyncIndex() {
-  ElMessage.warning('指数价格同步功能请在首页操作')
-}
-
 const indices = [
   { symbol: '^SPX', name: 'S&P 500' },
   { symbol: '^HSI', name: '恒生指数' },
@@ -41,6 +37,10 @@ async function handleSyncWiki() {
 
 async function handleSyncPrices() {
   await startJob(() => syncPrices(activeIndex.value))
+}
+
+async function handleSyncFundamentals() {
+  await startJob(() => syncFundamentals(activeIndex.value))
 }
 
 async function handleSyncBulk() {
@@ -128,12 +128,15 @@ function getStatusType(status: string) {
             <el-button type="primary" @click="handleSyncWiki" :loading="loading">
               同步成分股Wiki
             </el-button>
+            <el-button type="warning" @click="handleSyncFundamentals" :loading="loading">
+              同步基本面/分红
+            </el-button>
             <el-button type="success" @click="handleSyncPrices" :loading="loading">
               全量价格同步 (2016-)
             </el-button>
           </el-space>
           <div style="color: #667085; font-size: 13px; margin-top: 12px">
-            Wiki同步：抓取成分股列表及简介；价格同步：抓取该指数下所有股票的历史日线。
+            Wiki同步：抓取成分股列表及简介；基本面/分红：抓取市值/股本/分红拆股；价格同步：抓取该指数下所有股票的历史日线。
           </div>
         </div>
         

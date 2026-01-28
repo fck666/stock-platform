@@ -18,9 +18,10 @@ public record StockDetailDto(
         String wikiDescription,
         String wikiExtract,
         Long sharesOutstanding,
+        Long floatShares,
         BigDecimal marketCap,
+        String currency,
         List<SecurityIdentifierDto> identifiers,
-        List<DividendDto> dividends
+        List<CorporateActionDto> corporateActions
 ) {
 }
-

@@ -1,10 +1,6 @@
 package com.stock.platform.backend_api.repository;
 
-import com.stock.platform.backend_api.api.dto.BarDto;
-import com.stock.platform.backend_api.api.dto.PagedResponse;
-import com.stock.platform.backend_api.api.dto.SecurityIdentifierDto;
-import com.stock.platform.backend_api.api.dto.StockDetailDto;
-import com.stock.platform.backend_api.api.dto.StockListItemDto;
+import com.stock.platform.backend_api.api.dto.*;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -153,12 +149,21 @@ public class MarketRepository {
                     ws.title as wiki_title,
                     ws.description as wiki_description,
                     ws.extract as wiki_extract,
-                    sd.shares_outstanding,
-                    sd.market_cap
+                    fs.shares_outstanding,
+                    fs.float_shares,
+                    fs.market_cap,
+                    fs.currency
                 from market.security s
                 left join market.security_detail sd on sd.security_id = s.id
                 left join market.index_membership m on m.security_id = s.id
                 left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
+                left join lateral (
+                    select shares_outstanding, float_shares, market_cap, currency
+                    from market.fundamental_snapshot
+                    where security_id = s.id
+                    order by as_of_date desc, created_at desc
+                    limit 1
+                ) fs on true
                 where s.canonical_symbol = :symbol and s.security_type = 'STOCK'
                 order by m.as_of_date desc nulls last
                 limit 1
@@ -168,7 +173,7 @@ public class MarketRepository {
                     if (!rs.next()) return null;
                     long securityId = rs.getLong("security_id");
                     List<SecurityIdentifierDto> identifiers = listIdentifiers(securityId);
-                    List<DividendDto> dividends = listDividends(securityId);
+                    List<CorporateActionDto> corporateActions = listCorporateActions(securityId);
                     return new StockDetailDto(
                             rs.getString("symbol"),
                             rs.getString("name"),
@@ -183,9 +188,11 @@ public class MarketRepository {
                             rs.getString("wiki_description"),
                             rs.getString("wiki_extract"),
                             rs.getObject("shares_outstanding", Long.class),
+                            rs.getObject("float_shares", Long.class),
                             rs.getBigDecimal("market_cap"),
+                            rs.getString("currency"),
                             identifiers,
-                            dividends
+                            corporateActions
                     );
                 }
         );
@@ -209,21 +216,24 @@ public class MarketRepository {
         );
     }
 
-    public List<DividendDto> listDividends(long securityId) {
+    public List<CorporateActionDto> listCorporateActions(long securityId) {
         MapSqlParameterSource params = new MapSqlParameterSource().addValue("securityId", securityId);
         return jdbc.query(
                 """
-                select ex_date, amount, dividend_type, raw_text
-                from market.dividend
+                select ex_date, action_type, cash_amount, currency, split_numerator, split_denominator, source
+                from market.corporate_action
                 where security_id = :securityId
                 order by ex_date desc
                 """,
                 params,
-                (rs, rowNum) -> new DividendDto(
+                (rs, rowNum) -> new CorporateActionDto(
                         rs.getObject("ex_date", LocalDate.class),
-                        rs.getBigDecimal("amount"),
-                        rs.getString("dividend_type"),
-                        rs.getString("raw_text")
+                        rs.getString("action_type"),
+                        rs.getBigDecimal("cash_amount"),
+                        rs.getString("currency"),
+                        rs.getObject("split_numerator", Integer.class),
+                        rs.getObject("split_denominator", Integer.class),
+                        rs.getString("source")
                 )
         );
     }

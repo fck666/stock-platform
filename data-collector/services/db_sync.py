@@ -11,7 +11,11 @@ import requests
 from collectors.sp500_list import fetch_sp500_companies, filter_symbols
 from collectors.hangseng_list import fetch_hsi_components, fetch_hstech_components
 from collectors.stooq_price import fetch_prices_range
-from collectors.stooq_operations import fetch_stooq_operations, fetch_stooq_fundamentals
+from collectors.yahoo_finance import (
+    canonical_to_yahoo_symbol,
+    fetch_yahoo_corporate_actions,
+    fetch_yahoo_fundamentals,
+)
 from collectors.wiki_info import fetch_company_wiki_summaries
 from db.connection import DbConfig, get_connection
 from db.stock_repo import StockRepository
@@ -128,31 +132,6 @@ def sync_index_wiki_to_db(
             wiki_url = str(r.get("wiki_url") or "").strip() or None
             if stooq_symbol:
                 repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
-
-                # Also sync dividends and fundamentals from Stooq
-                try:
-                    with requests.Session() as http:
-                        # 1. Fundamentals (Market Cap, Shares)
-                        fund = fetch_stooq_fundamentals(http, stooq_symbol, http_timeout_seconds, user_agent)
-                        repo.upsert_security_detail(
-                            security_id=security_id,
-                            shares_outstanding=fund.get("shares_outstanding"),
-                            market_cap=fund.get("market_cap")
-                        )
-
-                        # 2. Operations (Dividends, Splits)
-                        ops_df = fetch_stooq_operations(http, stooq_symbol, http_timeout_seconds, user_agent)
-                        for _, op in ops_df.iterrows():
-                            repo.upsert_dividend(
-                                security_id=security_id,
-                                ex_date=op["ex_date"],
-                                amount=op["amount"],
-                                dividend_type=op["type"],
-                                raw_text=op["raw_text"]
-                            )
-                        log.info("Synced fundamentals and %s operations for %s", len(ops_df), stooq_symbol)
-                except Exception as e:
-                    log.warning("Failed syncing operations for %s: %s", stooq_symbol, e)
             if wiki_url:
                 repo.upsert_security_identifier(security_id=security_id, provider="wikipedia", identifier=wiki_url)
 
@@ -193,6 +172,103 @@ def sync_index_wiki_to_db(
 
     log.info("Upserted %s securities and %s wiki summaries for %s", securities_upserted, wiki_upserted, index_symbol)
     return WikiSyncResult(securities_upserted=securities_upserted, wiki_upserted=wiki_upserted)
+
+
+@dataclass(frozen=True)
+class FundamentalsSyncResult:
+    securities_scanned: int
+    snapshots_upserted: int
+    actions_upserted: int
+
+
+def sync_index_fundamentals_to_db(
+    *,
+    db_dsn: str,
+    index_symbol: str,
+    symbols: Iterable[str] | None,
+    limit: int | None,
+    http_timeout_seconds: float,
+    user_agent: str,
+) -> FundamentalsSyncResult:
+    snapshots_upserted = 0
+    actions_upserted = 0
+    securities_scanned = 0
+
+    with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
+        repo = StockRepository(conn)
+        repo.ensure_search_path()
+
+        try:
+            from collectors.yahoo_finance import warmup_yahoo_session
+
+            warmup_yahoo_session(http, timeout=http_timeout_seconds, user_agent=user_agent)
+        except Exception:
+            pass
+
+        constituents = repo.list_latest_index_constituents(index_symbol=index_symbol, symbols=symbols, limit=limit)
+        if not constituents:
+            sync_index_wiki_to_db(
+                db_dsn=db_dsn,
+                index_symbol=index_symbol,
+                symbols=symbols,
+                limit=limit,
+                wiki_lang="zh",
+                http_timeout_seconds=http_timeout_seconds,
+                user_agent=user_agent,
+            )
+            constituents = repo.list_latest_index_constituents(index_symbol=index_symbol, symbols=symbols, limit=limit)
+
+        today = datetime.utcnow().date()
+        for c in constituents:
+            securities_scanned += 1
+            yahoo_symbol = canonical_to_yahoo_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
+            repo.upsert_security_identifier(security_id=c.security_id, provider="yahoo", identifier=yahoo_symbol)
+
+            try:
+                fund = fetch_yahoo_fundamentals(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
+                repo.upsert_fundamental_snapshot(
+                    security_id=c.security_id,
+                    as_of_date=today,
+                    shares_outstanding=fund.shares_outstanding,
+                    float_shares=fund.float_shares,
+                    market_cap=fund.market_cap,
+                    currency=fund.currency,
+                    source="yahoo",
+                )
+                snapshots_upserted += 1
+            except Exception as e:
+                log.warning("Failed fetching fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
+
+            try:
+                actions = fetch_yahoo_corporate_actions(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
+                for a in actions:
+                    repo.upsert_corporate_action(
+                        security_id=c.security_id,
+                        ex_date=a.ex_date,
+                        action_type=a.action_type,
+                        cash_amount=a.cash_amount,
+                        currency=a.currency,
+                        split_numerator=a.split_numerator,
+                        split_denominator=a.split_denominator,
+                        source="yahoo",
+                        raw_payload=a.raw_payload,
+                    )
+                    actions_upserted += 1
+            except Exception as e:
+                log.warning("Failed fetching corporate actions for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
+            try:
+                import random
+                import time
+
+                time.sleep(0.8 + random.random() * 0.8)
+            except Exception:
+                pass
+
+    return FundamentalsSyncResult(
+        securities_scanned=securities_scanned,
+        snapshots_upserted=snapshots_upserted,
+        actions_upserted=actions_upserted,
+    )
 
 
 def sync_sp500_wiki_to_db(

@@ -30,11 +30,14 @@ export type SecurityIdentifierDto = {
   identifier: string
 }
 
-export type DividendDto = {
+export type CorporateActionDto = {
   exDate: string
-  amount: number | null
-  type: string
-  rawText: string | null
+  actionType: string
+  cashAmount: number | null
+  currency: string | null
+  splitNumerator: number | null
+  splitDenominator: number | null
+  source: string | null
 }
 
 export type StockDetailDto = {
@@ -51,9 +54,11 @@ export type StockDetailDto = {
   wikiDescription: string | null
   wikiExtract: string | null
   sharesOutstanding: number | null
+  floatShares: number | null
   marketCap: number | null
+  currency: string | null
   identifiers: SecurityIdentifierDto[]
-  dividends: DividendDto[]
+  corporateActions: CorporateActionDto[]
 }
 
 export type SyncJobDto = {
@@ -97,6 +102,11 @@ export async function syncWiki(index: string = '^SPX') {
   return res.data
 }
 
+export async function syncFundamentals(index: string = '^SPX') {
+  const res = await http.post<SyncJobDto>('/api/sync/fundamentals', null, { params: { index } })
+  return res.data
+}
+
 export async function syncPrices(index: string = '^SPX') {
   const res = await http.post<SyncJobDto>('/api/sync/prices', null, { params: { index } })
   return res.data
@@ -116,4 +126,3 @@ export async function getSyncJob(jobId: string) {
   const res = await http.get<SyncJobDto>(`/api/sync/jobs/${encodeURIComponent(jobId)}`)
   return res.data
 }
-

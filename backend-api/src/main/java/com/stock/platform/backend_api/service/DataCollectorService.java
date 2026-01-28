@@ -60,6 +60,15 @@ public class DataCollectorService {
         return startJob(args);
     }
 
+    public SyncJobDto startSyncFundamentals(String index) {
+        List<String> args = List.of(
+                "main.py",
+                "db-sync-fundamentals",
+                "--index", index
+        );
+        return startJob(args);
+    }
+
     public SyncJobDto startSyncIndexPrices(String index, LocalDate start, LocalDate end) {
         List<String> args = List.of(
                 "main.py",

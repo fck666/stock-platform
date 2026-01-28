@@ -46,24 +46,6 @@ function setDefaultRange() {
   start.value = ymd(s)
 }
 
-function setRangeYears(years: number) {
-  const e = end.value ? new Date(end.value) : new Date()
-  if (!end.value) e.setDate(e.getDate() - 1)
-  const s = new Date(e)
-  s.setFullYear(s.getFullYear() - years)
-  end.value = ymd(e)
-  start.value = ymd(s)
-  load()
-}
-
-function setAll() {
-  const e = new Date()
-  e.setDate(e.getDate() - 1)
-  end.value = ymd(e)
-  start.value = '2016-01-01'
-  load()
-}
-
 function updateChartHeight() {
   chartHeight.value = clamp(Math.floor(window.innerHeight - 320), 520, 900)
 }

@@ -8,6 +8,7 @@ from services.full_sync import run_full_sync
 from services.db_sync import (
     sync_indices_prices_to_db,
     sync_index_daily_incremental,
+    sync_index_fundamentals_to_db,
     sync_index_prices_to_db,
     sync_index_wiki_to_db,
     sync_sp500_daily_incremental,
@@ -49,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     wiki.add_argument("--limit", type=int, default=None)
     wiki.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
+
+    fund = sub.add_parser("db-sync-fundamentals")
+    fund.add_argument("--db-dsn", default=None)
+    fund.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
+    fund.add_argument("--limit", type=int, default=None)
+    fund.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
 
     prices = sub.add_parser("db-full-prices")
     prices.add_argument("--db-dsn", default=None)
@@ -116,6 +123,20 @@ def main() -> int:
             symbols=_parse_csv_list(args.symbols),
             limit=args.limit,
             wiki_lang=settings.wiki_lang,
+            http_timeout_seconds=settings.http_timeout_seconds,
+            user_agent=settings.user_agent,
+        )
+        return 0
+
+    if args.command == "db-sync-fundamentals":
+        db_dsn = args.db_dsn or settings.db_dsn
+        if not db_dsn:
+            raise RuntimeError("DB_DSN is not configured")
+        sync_index_fundamentals_to_db(
+            db_dsn=db_dsn,
+            index_symbol=args.index,
+            symbols=_parse_csv_list(args.symbols),
+            limit=args.limit,
             http_timeout_seconds=settings.http_timeout_seconds,
             user_agent=settings.user_agent,
         )

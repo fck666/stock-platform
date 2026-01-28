@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable
 
+import json
 import psycopg2
 from psycopg2.extras import execute_values
 
@@ -92,15 +93,12 @@ class StockRepository:
         founded: str | None = None,
         wiki_url: str | None = None,
         stooq_symbol: str | None = None,
-        shares_outstanding: int | None = None,
-        market_cap: float | None = None,
     ) -> None:
         sql = """
         INSERT INTO security_detail (
-            security_id, sector, sub_industry, headquarters, cik, founded, wiki_url, stooq_symbol,
-            shares_outstanding, market_cap
+            security_id, sector, sub_industry, headquarters, cik, founded, wiki_url, stooq_symbol
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (security_id)
         DO UPDATE SET
             sector = COALESCE(EXCLUDED.sector, security_detail.sector),
@@ -110,8 +108,6 @@ class StockRepository:
             founded = COALESCE(EXCLUDED.founded, security_detail.founded),
             wiki_url = COALESCE(EXCLUDED.wiki_url, security_detail.wiki_url),
             stooq_symbol = COALESCE(EXCLUDED.stooq_symbol, security_detail.stooq_symbol),
-            shares_outstanding = COALESCE(EXCLUDED.shares_outstanding, security_detail.shares_outstanding),
-            market_cap = COALESCE(EXCLUDED.market_cap, security_detail.market_cap),
             updated_at = now();
         """
         with self._conn.cursor() as cur:
@@ -126,8 +122,6 @@ class StockRepository:
                     founded,
                     wiki_url,
                     stooq_symbol,
-                    shares_outstanding,
-                    market_cap,
                 ),
             )
         self._conn.commit()
@@ -334,25 +328,78 @@ class StockRepository:
         currency: str | None
         source: str
 
-    def upsert_dividend(
+    def upsert_corporate_action(
         self,
         *,
         security_id: int,
         ex_date: date,
-        amount: float | None,
-        dividend_type: str,
-        raw_text: str | None = None,
+        action_type: str,
+        cash_amount: float | None = None,
+        currency: str | None = None,
+        split_numerator: int | None = None,
+        split_denominator: int | None = None,
+        source: str = "yahoo",
+        raw_payload: dict | None = None,
     ) -> None:
         sql = """
-        INSERT INTO dividend (security_id, ex_date, amount, dividend_type, raw_text)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (security_id, ex_date, dividend_type)
+        INSERT INTO corporate_action (
+            security_id, ex_date, action_type, cash_amount, currency, split_numerator, split_denominator, source, raw_payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (security_id, ex_date, action_type)
         DO UPDATE SET
-            amount = EXCLUDED.amount,
-            raw_text = EXCLUDED.raw_text;
+            cash_amount = EXCLUDED.cash_amount,
+            currency = EXCLUDED.currency,
+            split_numerator = EXCLUDED.split_numerator,
+            split_denominator = EXCLUDED.split_denominator,
+            source = EXCLUDED.source,
+            raw_payload = EXCLUDED.raw_payload;
         """
         with self._conn.cursor() as cur:
-            cur.execute(sql, (security_id, ex_date, amount, dividend_type, raw_text))
+            cur.execute(
+                sql,
+                (
+                    security_id,
+                    ex_date,
+                    action_type,
+                    cash_amount,
+                    currency,
+                    split_numerator,
+                    split_denominator,
+                    source,
+                    json.dumps(raw_payload) if raw_payload is not None else None,
+                ),
+            )
+        self._conn.commit()
+
+    def upsert_fundamental_snapshot(
+        self,
+        *,
+        security_id: int,
+        as_of_date: date,
+        shares_outstanding: int | None = None,
+        float_shares: int | None = None,
+        market_cap: float | None = None,
+        currency: str | None = None,
+        source: str = "yahoo",
+    ) -> None:
+        sql = """
+        INSERT INTO fundamental_snapshot (
+            security_id, as_of_date, shares_outstanding, float_shares, market_cap, currency, source
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (security_id, as_of_date, source)
+        DO UPDATE SET
+            shares_outstanding = EXCLUDED.shares_outstanding,
+            float_shares = EXCLUDED.float_shares,
+            market_cap = EXCLUDED.market_cap,
+            currency = EXCLUDED.currency;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (security_id, as_of_date, shares_outstanding, float_shares, market_cap, currency, source),
+            )
         self._conn.commit()
 
     def upsert_price_bars(self, rows: Iterable["StockRepository.PriceBarRow"]) -> int:

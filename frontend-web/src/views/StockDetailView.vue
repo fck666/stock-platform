@@ -163,7 +163,10 @@ watch(symbol, () => loadAll())
             <el-descriptions-item label="CIK" v-if="hasValue(detail?.cik)">{{ detail?.cik }}</el-descriptions-item>
             <el-descriptions-item label="Founded" v-if="hasValue(detail?.founded)">{{ detail?.founded }}</el-descriptions-item>
             <el-descriptions-item label="总股数" v-if="detail?.sharesOutstanding">{{ detail.sharesOutstanding.toLocaleString() }}</el-descriptions-item>
-            <el-descriptions-item label="市值" v-if="detail?.marketCap">{{ detail.marketCap.toLocaleString() }}</el-descriptions-item>
+            <el-descriptions-item label="流通股数" v-if="detail?.floatShares">{{ detail.floatShares.toLocaleString() }}</el-descriptions-item>
+            <el-descriptions-item label="市值" v-if="detail?.marketCap">
+              {{ detail.currency ? `${detail.currency} ` : '' }}{{ detail.marketCap.toLocaleString() }}
+            </el-descriptions-item>
             <el-descriptions-item label="Wikipedia" v-if="hasValue(detail?.wikiUrl)">
               <a :href="detail!.wikiUrl!" target="_blank" rel="noreferrer">{{ detail?.wikiTitle || detail?.wikiUrl }}</a>
             </el-descriptions-item>
@@ -178,17 +181,22 @@ watch(symbol, () => loadAll())
           </el-table>
         </el-card>
 
-        <el-card v-if="detail?.dividends && detail.dividends.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
+        <el-card v-if="detail?.corporateActions && detail.corporateActions.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">分红与拆股</div>
-          <el-table :data="detail?.dividends || []" size="small" style="width: 100%">
+          <el-table :data="detail?.corporateActions || []" size="small" style="width: 100%">
             <el-table-column prop="exDate" label="日期" width="100" />
-            <el-table-column prop="type" label="类型" width="80" />
-            <el-table-column prop="amount" label="金额/比例" width="100">
+            <el-table-column prop="actionType" label="类型" width="80" />
+            <el-table-column label="金额/比例" width="120">
               <template #default="{ row }">
-                {{ row.amount || '-' }}
+                <span v-if="row.actionType === 'DIVIDEND'">
+                  {{ row.cashAmount ?? '-' }}
+                </span>
+                <span v-else>
+                  {{ row.splitNumerator && row.splitDenominator ? `${row.splitNumerator}:${row.splitDenominator}` : '-' }}
+                </span>
               </template>
             </el-table-column>
-            <el-table-column prop="rawText" label="详情" show-overflow-tooltip />
+            <el-table-column prop="source" label="来源" width="80" />
           </el-table>
         </el-card>
 
