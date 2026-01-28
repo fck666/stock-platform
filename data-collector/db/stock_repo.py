@@ -201,6 +201,24 @@ class StockRepository:
             row = cur.fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def delete_price_bars(self, *, security_id: int, interval: str) -> None:
+        sql = "DELETE FROM price_bar WHERE security_id = %s AND interval = %s;"
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, interval))
+        self._conn.commit()
+
+    def get_price_bars_map(
+        self, *, security_id: int, interval: str, start_date: date, end_date: date
+    ) -> dict[date, float]:
+        sql = """
+        SELECT bar_date, close FROM price_bar 
+        WHERE security_id = %s AND interval = %s AND bar_date BETWEEN %s AND %s;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, interval, start_date, end_date))
+            rows = cur.fetchall()
+        return {r[0]: float(r[1]) for r in rows if r[1] is not None}
+
     @dataclass(frozen=True)
     class Sp500Constituent:
         security_id: int

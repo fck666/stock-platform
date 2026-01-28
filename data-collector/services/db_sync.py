@@ -284,6 +284,48 @@ def sync_indices_prices_to_db(
                         user_agent=user_agent,
                         pause_seconds=0.1,
                     )
+                    
+                    # Detect splits/dividends:
+                    # If we have existing data in the lookback period, compare close prices.
+                    if max_date is not None and not df.empty:
+                        overlap_df = df[df["date"].dt.date <= max_date]
+                        if not overlap_df.empty:
+                            # Fetch current DB values for these dates
+                            db_prices = repo.get_price_bars_map(
+                                security_id=security_id, 
+                                interval=interval, 
+                                start_date=overlap_df["date"].min().date(),
+                                end_date=overlap_df["date"].max().date()
+                            )
+                            
+                            mismatch_found = False
+                            for _, r in overlap_df.iterrows():
+                                d = r["date"].date()
+                                new_close = float(r["close"])
+                                old_close = db_prices.get(d)
+                                if old_close is not None:
+                                    # If difference > 0.5%, assume corporate action (split/dividend)
+                                    if abs(new_close - old_close) / old_close > 0.005:
+                                        log.info("Adjustment detected for %s at %s (old: %s, new: %s). Re-syncing full history.", 
+                                                 canonical_symbol, d, old_close, new_close)
+                                        mismatch_found = True
+                                        break
+                            
+                            if mismatch_found:
+                                repo.delete_price_bars(security_id=security_id, interval=interval)
+                                # Restart fetching from the very beginning
+                                return sync_index_prices_to_db(
+                                    db_dsn=db_dsn,
+                                    index_symbol=index_symbol,
+                                    start_date=start_date, # original start
+                                    end_date=end_date,
+                                    interval=interval,
+                                    symbols=[canonical_symbol], # only this one
+                                    limit=None,
+                                    http_timeout_seconds=http_timeout_seconds,
+                                    user_agent=user_agent,
+                                    include_indices=False
+                                )
                 except Exception as e:
                     log.warning("Failed fetching %s (%s) %s..%s: %s", canonical_symbol, stooq_symbol, chunk_start, chunk_end, e)
                     if "rate limit exceeded" in str(e).lower() or "daily hits limit" in str(e).lower():
@@ -360,6 +402,43 @@ def sync_index_prices_to_db(
                         user_agent=user_agent,
                         pause_seconds=0.1,
                     )
+                    
+                    # Detect splits/dividends:
+                    if max_date is not None and not df.empty:
+                        overlap_df = df[df["date"].dt.date <= max_date]
+                        if not overlap_df.empty:
+                            db_prices = repo.get_price_bars_map(
+                                security_id=security_id, 
+                                interval=interval, 
+                                start_date=overlap_df["date"].min().date(),
+                                end_date=overlap_df["date"].max().date()
+                            )
+                            mismatch_found = False
+                            for _, r in overlap_df.iterrows():
+                                d = r["date"].date()
+                                new_close = float(r["close"])
+                                old_close = db_prices.get(d)
+                                if old_close is not None and abs(new_close - old_close) / old_close > 0.005:
+                                    log.info("Adjustment detected for %s. Re-syncing full history.", canonical_symbol)
+                                    mismatch_found = True
+                                    break
+                            
+                            if mismatch_found:
+                                repo.delete_price_bars(security_id=security_id, interval=interval)
+                                # Trigger a re-sync for this specific security in the next loop or recursive call
+                                # For simplicity in this loop, we continue to the next security after resetting this one
+                                # but the most robust way is to re-run the sync for this symbol.
+                                # Let's just reset the effective_start and re-run for this symbol:
+                                df = fetch_prices_range(
+                                    session=http,
+                                    stooq_symbol=stooq_symbol,
+                                    start_date=start,
+                                    end_date=end,
+                                    freq=freq,
+                                    timeout=http_timeout_seconds,
+                                    user_agent=user_agent,
+                                    pause_seconds=0.1,
+                                )
                 except Exception as e:
                     log.warning(
                         "Failed fetching %s (%s) %s..%s: %s",
