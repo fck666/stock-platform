@@ -42,6 +42,61 @@ public class MarketRepository {
         return Optional.ofNullable(asOf);
     }
 
+    public List<StockListItemDto> getAllIndexStocks(String indexSymbol) {
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            asOf = getLatestIndexAsOfDate(indexSymbol)
+                    .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (!listAll) {
+            params.addValue("indexSymbol", indexSymbol);
+            params.addValue("asOf", asOf);
+        }
+
+        String sql;
+        if (listAll) {
+            sql = """
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    sd.sector,
+                    sd.sub_industry,
+                    sd.headquarters,
+                    null as wiki_description
+                from market.security s
+                left join market.security_detail sd on sd.security_id = s.id
+                where s.security_type = 'STOCK'
+                """;
+        } else {
+            sql = """
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    sd.sector,
+                    sd.sub_industry,
+                    sd.headquarters,
+                    null as wiki_description
+                from market.security s
+                join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
+                left join market.security_detail sd on sd.security_id = s.id
+                where s.security_type = 'STOCK'
+                """;
+        }
+
+        return jdbc.query(sql, params, (rs, rowNum) -> new StockListItemDto(
+                rs.getString("symbol"),
+                rs.getString("name"),
+                rs.getString("sector"),
+                rs.getString("sub_industry"),
+                rs.getString("headquarters"),
+                rs.getString("wiki_description")
+        ));
+    }
+
     public PagedResponse<StockListItemDto> listIndexStocks(
             String indexSymbol,
             String query,
