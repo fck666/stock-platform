@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 
 from collectors.sp500_list import fetch_sp500_companies, filter_symbols
+from collectors.hangseng_list import fetch_hsi_components, fetch_hstech_components
 from collectors.stooq_price import fetch_prices_range
 from collectors.wiki_info import fetch_company_wiki_summaries
 from db.connection import DbConfig, get_connection
@@ -23,6 +24,8 @@ DEFAULT_INDICES: dict[str, dict[str, str]] = {
     "^SPX": {"name": "S&P 500", "type": "INDEX", "stooq": "^spx"},
     "^DJI": {"name": "Dow Jones Industrial", "type": "INDEX", "stooq": "^dji"},
     "^NDQ": {"name": "Nasdaq Composite", "type": "INDEX", "stooq": "^ndq"},
+    "^HSI": {"name": "Hang Seng Index", "type": "INDEX", "stooq": "^HSI"},
+    "^HSTECH": {"name": "Hang Seng TECH Index", "type": "INDEX", "stooq": "^HSTECH"},
     "IWM": {"name": "Russell 2000 (ETF proxy)", "type": "ETF", "stooq": "iwm.us"},
     "VIXY": {"name": "VIX (ETF proxy)", "type": "ETF", "stooq": "vixy.us"},
 }
@@ -63,9 +66,10 @@ class WikiSyncResult:
     wiki_upserted: int
 
 
-def sync_sp500_wiki_to_db(
+def sync_index_wiki_to_db(
     *,
     db_dsn: str,
+    index_symbol: str,
     symbols: Iterable[str] | None,
     limit: int | None,
     wiki_lang: str,
@@ -73,7 +77,15 @@ def sync_sp500_wiki_to_db(
     user_agent: str,
 ) -> WikiSyncResult:
     with requests.Session() as session:
-        companies = fetch_sp500_companies(session, timeout=http_timeout_seconds, user_agent=user_agent)
+        if index_symbol == "^SPX":
+            companies = fetch_sp500_companies(session, timeout=http_timeout_seconds, user_agent=user_agent)
+        elif index_symbol == "^HSI":
+            companies = fetch_hsi_components(session, timeout=http_timeout_seconds, user_agent=user_agent)
+        elif index_symbol == "^HSTECH":
+            companies = fetch_hstech_components(session, timeout=http_timeout_seconds, user_agent=user_agent)
+        else:
+            raise ValueError(f"Unsupported index for wiki sync: {index_symbol}")
+
         companies = filter_symbols(companies, symbols=symbols, limit=limit)
 
         wiki_summaries = fetch_company_wiki_summaries(
@@ -86,9 +98,17 @@ def sync_sp500_wiki_to_db(
         )
 
     as_of = datetime.utcnow().date()
+    index_meta = DEFAULT_INDICES.get(index_symbol)
+    index_name = index_meta["name"] if index_meta else index_symbol
+
     with get_connection(DbConfig(dsn=db_dsn)) as conn:
         repo = StockRepository(conn)
         repo.ensure_search_path()
+
+        index_id = repo.upsert_security(security_type="INDEX", canonical_symbol=index_symbol, name=index_name)
+        stooq_idx = index_meta["stooq"] if index_meta else None
+        if stooq_idx:
+            repo.upsert_security_identifier(security_id=index_id, provider="stooq", identifier=stooq_idx)
 
         securities_upserted = 0
         symbol_to_security_id: dict[str, int] = {}
@@ -110,14 +130,17 @@ def sync_sp500_wiki_to_db(
             if wiki_url:
                 repo.upsert_security_identifier(security_id=security_id, provider="wikipedia", identifier=wiki_url)
 
-            repo.upsert_sp500_membership(
+            repo.upsert_index_membership(
+                index_id=index_id,
                 security_id=security_id,
                 as_of_date=as_of,
-                security_name=security_name,
-                gics_sector=str(r.get("gics_sector") or "").strip() or None,
-                gics_sub_industry=str(r.get("gics_sub_industry") or "").strip() or None,
-                headquarters=str(r.get("headquarters") or "").strip() or None,
                 date_first_added=_parse_optional_date(r.get("date_first_added")),
+            )
+            repo.upsert_security_detail(
+                security_id=security_id,
+                sector=str(r.get("gics_sector") or "").strip() or None,
+                sub_industry=str(r.get("gics_sub_industry") or "").strip() or None,
+                headquarters=str(r.get("headquarters") or "").strip() or None,
                 cik=str(r.get("cik") or "").strip() or None,
                 founded=str(r.get("founded") or "").strip() or None,
                 wiki_url=wiki_url,
@@ -142,8 +165,28 @@ def sync_sp500_wiki_to_db(
                 )
                 wiki_upserted += 1
 
-    log.info("Upserted %s securities and %s wiki summaries", securities_upserted, wiki_upserted)
+    log.info("Upserted %s securities and %s wiki summaries for %s", securities_upserted, wiki_upserted, index_symbol)
     return WikiSyncResult(securities_upserted=securities_upserted, wiki_upserted=wiki_upserted)
+
+
+def sync_sp500_wiki_to_db(
+    *,
+    db_dsn: str,
+    symbols: Iterable[str] | None,
+    limit: int | None,
+    wiki_lang: str,
+    http_timeout_seconds: float,
+    user_agent: str,
+) -> WikiSyncResult:
+    return sync_index_wiki_to_db(
+        db_dsn=db_dsn,
+        index_symbol="^SPX",
+        symbols=symbols,
+        limit=limit,
+        wiki_lang=wiki_lang,
+        http_timeout_seconds=http_timeout_seconds,
+        user_agent=user_agent,
+    )
 
 
 @dataclass(frozen=True)
@@ -223,7 +266,9 @@ def sync_indices_prices_to_db(
             max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
             effective_start = start
             if max_date is not None:
-                effective_start = max(effective_start, max_date + timedelta(days=1))
+                # Look back 7 days to catch any data updates/fixes from provider
+                effective_start = max(start, max_date - timedelta(days=7))
+            
             if effective_start > end:
                 continue
 
@@ -251,9 +296,10 @@ def sync_indices_prices_to_db(
     return PriceSyncResult(securities_scanned=securities_scanned, bars_upserted=bars_upserted)
 
 
-def sync_sp500_prices_to_db(
+def sync_index_prices_to_db(
     *,
     db_dsn: str,
+    index_symbol: str,
     start_date: str,
     end_date: str,
     interval: str,
@@ -273,33 +319,19 @@ def sync_sp500_prices_to_db(
         repo = StockRepository(conn)
         repo.ensure_search_path()
 
-        constituents = repo.list_latest_sp500_constituents(symbols=symbols, limit=limit)
+        constituents = repo.list_latest_index_constituents(index_symbol=index_symbol, symbols=symbols, limit=limit)
         if not constituents:
-            with requests.Session() as session:
-                companies = fetch_sp500_companies(session, timeout=http_timeout_seconds, user_agent=user_agent)
-                companies = filter_symbols(companies, symbols=symbols, limit=limit)
-            fallback: list[StockRepository.Sp500Constituent] = []
-            for _, r in companies.iterrows():
-                canonical_symbol = str(r["symbol"]).strip().upper()
-                security_name = str(r.get("security") or "").strip() or None
-                stooq_symbol = str(r.get("stooq_symbol") or "").strip().lower()
-                if stooq_symbol == "":
-                    continue
-                security_id = repo.upsert_security(
-                    security_type="STOCK",
-                    canonical_symbol=canonical_symbol,
-                    name=security_name,
-                )
-                repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
-                fallback.append(
-                    StockRepository.Sp500Constituent(
-                        security_id=security_id,
-                        canonical_symbol=canonical_symbol,
-                        stooq_symbol=stooq_symbol,
-                        security_name=security_name,
-                    )
-                )
-            constituents = fallback
+            # Fallback to wiki sync if no constituents in DB
+            sync_index_wiki_to_db(
+                db_dsn=db_dsn,
+                index_symbol=index_symbol,
+                symbols=symbols,
+                limit=limit,
+                wiki_lang="zh",
+                http_timeout_seconds=http_timeout_seconds,
+                user_agent=user_agent,
+            )
+            constituents = repo.list_latest_index_constituents(index_symbol=index_symbol, symbols=symbols, limit=limit)
 
         for c in constituents:
             securities_scanned += 1
@@ -310,7 +342,9 @@ def sync_sp500_prices_to_db(
             max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
             effective_start = start
             if max_date is not None:
-                effective_start = max(effective_start, max_date + timedelta(days=1))
+                # Look back 7 days to catch any data updates/fixes from provider
+                effective_start = max(start, max_date - timedelta(days=7))
+            
             if effective_start > end:
                 continue
 
@@ -343,18 +377,102 @@ def sync_sp500_prices_to_db(
                 bars_upserted += repo.upsert_price_bars(rows)
 
     if include_indices:
-        idx_res = sync_indices_prices_to_db(
-            db_dsn=db_dsn,
-            start_date=start_date,
-            end_date=end_date,
-            interval=interval,
-            http_timeout_seconds=http_timeout_seconds,
-            user_agent=user_agent,
-        )
-        securities_scanned += idx_res.securities_scanned
-        bars_upserted += idx_res.bars_upserted
+        # Also sync the index price itself
+        idx_meta = DEFAULT_INDICES.get(index_symbol)
+        if idx_meta:
+            stooq_idx = idx_meta["stooq"]
+            with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
+                repo = StockRepository(conn)
+                repo.ensure_search_path()
+                security_id = repo.upsert_security(
+                    security_type=idx_meta["type"],
+                    canonical_symbol=index_symbol,
+                    name=idx_meta["name"],
+                )
+                repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_idx)
+
+                max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
+                effective_start = start
+                if max_date is not None:
+                    effective_start = max(effective_start, max_date + timedelta(days=1))
+                
+                if effective_start <= end:
+                    for chunk_start, chunk_end in _iter_date_ranges(effective_start, end, max_days=4000):
+                        try:
+                            df = fetch_prices_range(
+                                session=http,
+                                stooq_symbol=stooq_idx,
+                                start_date=chunk_start,
+                                end_date=chunk_end,
+                                freq=freq,
+                                timeout=http_timeout_seconds,
+                                user_agent=user_agent,
+                                pause_seconds=0.1,
+                            )
+                            rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source="stooq")
+                            bars_upserted += repo.upsert_price_bars(rows)
+                            securities_scanned += 1
+                        except Exception as e:
+                            log.warning("Failed fetching index %s: %s", index_symbol, e)
 
     return PriceSyncResult(securities_scanned=securities_scanned, bars_upserted=bars_upserted)
+
+
+def sync_sp500_prices_to_db(
+    *,
+    db_dsn: str,
+    start_date: str,
+    end_date: str,
+    interval: str,
+    symbols: Iterable[str] | None,
+    limit: int | None,
+    http_timeout_seconds: float,
+    user_agent: str,
+    include_indices: bool = True,
+) -> PriceSyncResult:
+    return sync_index_prices_to_db(
+        db_dsn=db_dsn,
+        index_symbol="^SPX",
+        start_date=start_date,
+        end_date=end_date,
+        interval=interval,
+        symbols=symbols,
+        limit=limit,
+        http_timeout_seconds=http_timeout_seconds,
+        user_agent=user_agent,
+        include_indices=include_indices,
+    )
+
+
+def sync_index_daily_incremental(
+    *,
+    db_dsn: str,
+    index_symbol: str,
+    interval: str = "1d",
+    symbols: Iterable[str] | None = None,
+    limit: int | None = None,
+    http_timeout_seconds: float,
+    user_agent: str,
+    include_indices: bool = True,
+) -> PriceSyncResult:
+    # HSI usually has missing volume on the most recent day in Stooq, 
+    # so we default to T-2 for HSI to ensure data quality.
+    days_ago = 2 if index_symbol.upper() == "^HSI" else 1
+    end_date = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+    
+    start_floor = "1900-01-01"
+    return sync_index_prices_to_db(
+        db_dsn=db_dsn,
+        index_symbol=index_symbol,
+        start_date=start_floor,
+        end_date=end_date,
+        interval=interval,
+        symbols=symbols,
+        limit=limit,
+        http_timeout_seconds=http_timeout_seconds,
+        user_agent=user_agent,
+        include_indices=include_indices,
+    )
 
 
 def sync_sp500_daily_incremental(
@@ -367,12 +485,9 @@ def sync_sp500_daily_incremental(
     user_agent: str,
     include_indices: bool = True,
 ) -> PriceSyncResult:
-    end_date = yesterday_ymd()
-    start_floor = "1900-01-01"
-    return sync_sp500_prices_to_db(
+    return sync_index_daily_incremental(
         db_dsn=db_dsn,
-        start_date=start_floor,
-        end_date=end_date,
+        index_symbol="^SPX",
         interval=interval,
         symbols=symbols,
         limit=limit,

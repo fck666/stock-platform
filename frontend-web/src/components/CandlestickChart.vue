@@ -145,7 +145,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
   const volumes = bars.map((b) => {
     const up = (b.close ?? 0) >= (b.open ?? 0)
     return {
-      value: b.volume ?? 0,
+      value: b.volume === null || b.volume === undefined ? '-' : b.volume,
       itemStyle: { color: up ? '#26a69a' : '#ef5350' },
     }
   })

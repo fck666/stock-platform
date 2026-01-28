@@ -26,6 +26,7 @@ public class StockController {
 
     @GetMapping
     public PagedResponse<StockListItemDto> listStocks(
+            @RequestParam(defaultValue = "^SPX") String index,
             @RequestParam(required = false) String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
@@ -33,7 +34,7 @@ public class StockController {
     ) {
         int safeSize = Math.min(Math.max(size, 1), 200);
         int safePage = Math.max(page, 0);
-        return marketRepository.listSp500Stocks(query, safePage, safeSize, lang);
+        return marketRepository.listIndexStocks(index.toUpperCase(), query, safePage, safeSize, lang);
     }
 
     @GetMapping("/{symbol}")

@@ -23,26 +23,36 @@ public class MarketRepository {
         this.jdbc = jdbc;
     }
 
-    public Optional<LocalDate> getLatestSp500AsOfDate() {
+    public Optional<LocalDate> getLatestIndexAsOfDate(String indexSymbol) {
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("symbol", indexSymbol);
         LocalDate asOf = jdbc.query(
-                "select max(as_of_date) as as_of_date from market.sp500_membership",
+                """
+                select max(m.as_of_date) as as_of_date 
+                from market.index_membership m
+                join market.security s on s.id = m.index_id
+                where s.canonical_symbol = :symbol
+                """,
+                params,
                 rs -> rs.next() ? rs.getObject("as_of_date", LocalDate.class) : null
         );
         return Optional.ofNullable(asOf);
     }
 
-    public PagedResponse<StockListItemDto> listSp500Stocks(
+    public PagedResponse<StockListItemDto> listIndexStocks(
+            String indexSymbol,
             String query,
             int page,
             int size,
             String lang
     ) {
-        LocalDate asOf = getLatestSp500AsOfDate().orElseThrow(() -> new IllegalStateException("S&P 500 list not loaded"));
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol)
+                .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
 
         String q = query == null ? null : query.trim();
         boolean hasQuery = q != null && !q.isBlank();
 
         MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
                 .addValue("asOf", asOf)
                 .addValue("lang", lang)
                 .addValue("limit", size)
@@ -53,14 +63,15 @@ public class MarketRepository {
         }
 
         String where = hasQuery
-                ? "and (s.canonical_symbol ilike :qLike or coalesce(m.security_name, s.name) ilike :qLike or ws.title ilike :qLike or ws.description ilike :qLike)"
+                ? "and (s.canonical_symbol ilike :qLike or s.name ilike :qLike or ws.title ilike :qLike or ws.description ilike :qLike)"
                 : "";
 
         long total = jdbc.queryForObject(
                 """
                 select count(*) as cnt
                 from market.security s
-                join market.sp500_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
                 left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
                 where s.security_type = 'STOCK'
                 %s
@@ -73,13 +84,15 @@ public class MarketRepository {
                 """
                 select
                     s.canonical_symbol as symbol,
-                    coalesce(m.security_name, s.name) as name,
-                    m.gics_sector,
-                    m.gics_sub_industry,
-                    m.headquarters,
+                    s.name as name,
+                    sd.sector,
+                    sd.sub_industry,
+                    sd.headquarters,
                     ws.description as wiki_description
                 from market.security s
-                join market.sp500_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
+                left join market.security_detail sd on sd.security_id = s.id
                 left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
                 where s.security_type = 'STOCK'
                 %s
@@ -90,14 +103,23 @@ public class MarketRepository {
                 (rs, rowNum) -> new StockListItemDto(
                         rs.getString("symbol"),
                         rs.getString("name"),
-                        rs.getString("gics_sector"),
-                        rs.getString("gics_sub_industry"),
+                        rs.getString("sector"),
+                        rs.getString("sub_industry"),
                         rs.getString("headquarters"),
                         rs.getString("wiki_description")
                 )
         );
 
         return new PagedResponse<>(items, total, page, size);
+    }
+
+    public PagedResponse<StockListItemDto> listSp500Stocks(
+            String query,
+            int page,
+            int size,
+            String lang
+    ) {
+        return listIndexStocks("^SPX", query, page, size, lang);
     }
 
     public Optional<Long> findSecurityIdBySymbol(String canonicalSymbol) {
@@ -111,11 +133,8 @@ public class MarketRepository {
     }
 
     public StockDetailDto getStockDetail(String canonicalSymbol, String lang) {
-        LocalDate asOf = getLatestSp500AsOfDate().orElse(null);
-
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("symbol", canonicalSymbol)
-                .addValue("asOf", asOf)
                 .addValue("lang", lang);
 
         StockDetailDto detail = jdbc.query(
@@ -123,21 +142,24 @@ public class MarketRepository {
                 select
                     s.id as security_id,
                     s.canonical_symbol as symbol,
-                    coalesce(m.security_name, s.name) as name,
-                    m.gics_sector,
-                    m.gics_sub_industry,
-                    m.headquarters,
+                    s.name as name,
+                    sd.sector,
+                    sd.sub_industry,
+                    sd.headquarters,
                     m.date_first_added,
-                    m.cik,
-                    m.founded,
-                    m.wiki_url,
+                    sd.cik,
+                    sd.founded,
+                    sd.wiki_url,
                     ws.title as wiki_title,
                     ws.description as wiki_description,
                     ws.extract as wiki_extract
                 from market.security s
-                left join market.sp500_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                left join market.security_detail sd on sd.security_id = s.id
+                left join market.index_membership m on m.security_id = s.id
                 left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
                 where s.canonical_symbol = :symbol and s.security_type = 'STOCK'
+                order by m.as_of_date desc nulls last
+                limit 1
                 """,
                 params,
                 rs -> {
@@ -147,8 +169,8 @@ public class MarketRepository {
                     return new StockDetailDto(
                             rs.getString("symbol"),
                             rs.getString("name"),
-                            rs.getString("gics_sector"),
-                            rs.getString("gics_sub_industry"),
+                            rs.getString("sector"),
+                            rs.getString("sub_industry"),
                             rs.getString("headquarters"),
                             rs.getObject("date_first_added", LocalDate.class),
                             rs.getString("cik"),

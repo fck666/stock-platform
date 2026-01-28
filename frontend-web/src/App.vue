@@ -7,6 +7,7 @@ const router = useRouter()
 
 const active = computed(() => {
   if (route.path.startsWith('/stocks')) return '/stocks'
+  if (route.path.startsWith('/sync')) return '/sync'
   return '/'
 })
 
@@ -22,6 +23,7 @@ function handleSelect(index: string) {
       <el-menu mode="horizontal" :default-active="active" @select="handleSelect" style="flex: 1">
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/stocks">股票列表</el-menu-item>
+        <el-menu-item index="/sync">数据同步</el-menu-item>
       </el-menu>
     </el-header>
     <el-main style="padding: 16px; background: #f6f7fb">

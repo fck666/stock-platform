@@ -25,20 +25,25 @@ CREATE TABLE IF NOT EXISTS market.security_identifier (
 CREATE INDEX IF NOT EXISTS idx_security_identifier_security_provider
     ON market.security_identifier (security_id, provider);
 
-CREATE TABLE IF NOT EXISTS market.sp500_membership (
+CREATE TABLE IF NOT EXISTS market.index_membership (
+    index_id BIGINT NOT NULL REFERENCES market.security(id) ON DELETE CASCADE,
     security_id BIGINT NOT NULL REFERENCES market.security(id) ON DELETE CASCADE,
     as_of_date DATE NOT NULL,
-    security_name TEXT,
-    gics_sector TEXT,
-    gics_sub_industry TEXT,
-    headquarters TEXT,
     date_first_added DATE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (index_id, security_id, as_of_date)
+);
+
+CREATE TABLE IF NOT EXISTS market.security_detail (
+    security_id BIGINT PRIMARY KEY REFERENCES market.security(id) ON DELETE CASCADE,
+    sector TEXT,
+    sub_industry TEXT,
+    headquarters TEXT,
     cik TEXT,
     founded TEXT,
     wiki_url TEXT,
     stooq_symbol TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (security_id, as_of_date)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS market.wiki_summary (

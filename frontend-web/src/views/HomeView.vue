@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
-import { type BarDto, getSp500Bars, syncSp500Index } from '../api/market'
+import { type BarDto, getIndexBars, syncPrices } from '../api/market'
 
 const loading = ref(false)
 const syncing = ref(false)
 const bars = ref<BarDto[]>([])
 
-const title = computed(() => 'S&P 500 (^SPX) 日K')
+const indices = [
+  { symbol: '^SPX', name: 'S&P 500' },
+  { symbol: '^HSI', name: '恒生指数' },
+  { symbol: '^HSTECH', name: '恒生科技' },
+]
+const activeIndex = ref('^SPX')
+
+const title = computed(() => {
+  const idx = indices.find(i => i.symbol === activeIndex.value)
+  return `${idx?.name || activeIndex.value} 日K`
+})
 
 const interval = ref<'1d'>('1d')
 const start = ref<string>('')
@@ -61,11 +71,12 @@ function updateChartHeight() {
 async function load() {
   loading.value = true
   try {
-    bars.value = await getSp500Bars({
-      interval: interval.value,
-      start: start.value || undefined,
-      end: end.value || undefined,
-    })
+    bars.value = await getIndexBars(
+      activeIndex.value,
+      interval.value,
+      start.value || undefined,
+      end.value || undefined
+    )
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
   } finally {
@@ -73,11 +84,13 @@ async function load() {
   }
 }
 
+watch(activeIndex, load)
+
 async function triggerSync() {
   syncing.value = true
   try {
-    const job = await syncSp500Index()
-    ElMessage.success(`已触发同步任务：${job.jobId}`)
+    const job = await syncPrices(activeIndex.value)
+    ElMessage.success(`价格同步任务已启动: ${job.jobId}`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '同步失败')
   } finally {
@@ -99,28 +112,23 @@ onBeforeUnmount(() => {
 
 <template>
   <el-space direction="vertical" style="width: 100%" :size="16" fill>
-    <el-card shadow="never" style="border-radius: 12px">
-      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div>
-          <div style="font-size: 16px; font-weight: 700">{{ title }}</div>
-          <div style="color: #667085; margin-top: 4px">上方为日K线，下方为成交量。支持区间调整与缩放。</div>
-          <div style="display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap">
-            <el-date-picker v-model="start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width: 150px" />
-            <el-date-picker v-model="end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width: 150px" />
-            <el-button :loading="loading" @click="load">应用</el-button>
-            <el-button @click="setRangeYears(1)">1Y</el-button>
-            <el-button @click="setRangeYears(2)">2Y</el-button>
-            <el-button @click="setRangeYears(5)">5Y</el-button>
-            <el-button @click="setAll">ALL</el-button>
-          </div>
-        </div>
-        <el-space>
-          <el-button type="primary" :loading="syncing" @click="triggerSync">同步数据</el-button>
-        </el-space>
-      </div>
-    </el-card>
+    <el-tabs v-model="activeIndex" type="card" class="index-tabs">
+      <el-tab-pane v-for="idx in indices" :key="idx.symbol" :label="idx.name" :name="idx.symbol" />
+    </el-tabs>
 
     <el-card shadow="never" style="border-radius: 12px" :body-style="{ padding: '0' }">
+      <template #header>
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px">
+          <div>
+            <div style="font-weight: 700; font-size: 16px">{{ title }}</div>
+            <div style="font-size: 13px; color: #667085; margin-top: 4px">上方为日K线，下方为成交量。默认展示最近两年的数据。</div>
+          </div>
+          <el-space>
+            <el-button @click="load" :loading="loading">刷新</el-button>
+            <el-button type="primary" @click="triggerSync" :loading="syncing">同步数据</el-button>
+          </el-space>
+        </div>
+      </template>
       <div v-loading="loading" :style="{ height: `${chartHeight}px`, overflow: 'hidden' }">
         <CandlestickChart :bars="bars" :title="title" :height="chartHeight" />
       </div>

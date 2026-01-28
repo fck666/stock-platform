@@ -22,14 +22,22 @@ class WikiSummary:
     page_id: int | None
 
 
-def _wiki_title_from_url(wiki_url: str) -> str | None:
+def _wiki_info_from_url(wiki_url: str) -> tuple[str, str] | None:
     try:
-        path = urlparse(wiki_url).path
+        parsed = urlparse(wiki_url)
+        host = parsed.netloc
+        path = parsed.path
+        
+        # Extract language from host, e.g. zh-yue.wikipedia.org -> zh-yue
+        lang = "en"
+        if host.endswith(".wikipedia.org"):
+            lang = host[: -len(".wikipedia.org")]
+        
         if not path.startswith("/wiki/"):
             return None
         title = path[len("/wiki/") :]
         title = unquote(title)
-        return title if title else None
+        return lang, title if title else None
     except Exception:
         return None
 
@@ -37,13 +45,16 @@ def _wiki_title_from_url(wiki_url: str) -> str | None:
 def fetch_wikipedia_summary(
     session: requests.Session,
     wiki_url: str,
-    lang: str,
+    lang_override: str | None,
     timeout: float,
     user_agent: str,
 ) -> dict:
-    title = _wiki_title_from_url(wiki_url)
-    if title is None:
-        raise ValueError(f"Invalid wiki url: {wiki_url}")
+    info = _wiki_info_from_url(wiki_url)
+    if info is None:
+        raise ValueError(f"Invalid wiki url or not a standard /wiki/ path: {wiki_url}")
+    
+    url_lang, title = info
+    lang = lang_override or url_lang
 
     api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
     headers = {
@@ -51,6 +62,19 @@ def fetch_wikipedia_summary(
         "Accept": "application/json",
     }
     resp = session.get(api_url, headers=headers, timeout=timeout)
+    
+    # If 404 and we were using an override or a specific lang, try falling back to the URL's own lang or 'zh'
+    if resp.status_code == 404 and lang != url_lang:
+        log.info("Wiki summary 404 for %s in %s, falling back to %s", title, lang, url_lang)
+        api_url = f"https://{url_lang}.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
+        resp = session.get(api_url, headers=headers, timeout=timeout)
+    
+    # Final fallback for HK stocks: if still 404 and it's zh-yue, try zh
+    if resp.status_code == 404 and url_lang == "zh-yue" and lang != "zh":
+        log.info("Wiki summary 404 for %s, trying zh.wikipedia.org", title)
+        api_url = f"https://zh.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
+        resp = session.get(api_url, headers=headers, timeout=timeout)
+
     resp.raise_for_status()
     return resp.json()
 
@@ -80,7 +104,7 @@ def fetch_company_wiki_summaries(
             payload = fetch_wikipedia_summary(
                 session=session,
                 wiki_url=wiki_url,
-                lang=lang,
+                lang_override=lang,
                 timeout=timeout,
                 user_agent=user_agent,
             )

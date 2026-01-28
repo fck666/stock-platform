@@ -36,7 +36,7 @@ public class DataCollectorService {
         this.environment = environment;
     }
 
-    public SyncJobDto startSyncIndices(LocalDate start, LocalDate end) {
+    public SyncJobDto startSyncIndices(String index, LocalDate start, LocalDate end) {
         List<String> args = List.of(
                 "main.py",
                 "db-sync-indices",
@@ -44,13 +44,39 @@ public class DataCollectorService {
                 "--start", start.toString(),
                 "--end", end.toString()
         );
+        // Note: For db-sync-indices, the script currently iterates over all default indices.
+        // If we want to sync a specific index, we might need to adjust the script.
+        // Actually, db-sync-indices is for the INDEX bars themselves.
+        // For components, we use db-sync-wiki and db-full-prices.
         return startJob(args);
     }
 
-    public SyncJobDto startSyncStock(String symbol, LocalDate start, LocalDate end) {
+    public SyncJobDto startSyncWiki(String index) {
+        List<String> args = List.of(
+                "main.py",
+                "db-sync-wiki",
+                "--index", index
+        );
+        return startJob(args);
+    }
+
+    public SyncJobDto startSyncIndexPrices(String index, LocalDate start, LocalDate end) {
         List<String> args = List.of(
                 "main.py",
                 "db-full-prices",
+                "--index", index,
+                "--interval", "1d",
+                "--start", start.toString(),
+                "--end", end.toString()
+        );
+        return startJob(args);
+    }
+
+    public SyncJobDto startSyncStock(String index, String symbol, LocalDate start, LocalDate end) {
+        List<String> args = List.of(
+                "main.py",
+                "db-full-prices",
+                "--index", index,
                 "--interval", "1d",
                 "--start", start.toString(),
                 "--end", end.toString(),
@@ -60,11 +86,12 @@ public class DataCollectorService {
         return startJob(args);
     }
 
-    public SyncJobDto startSyncStocks(List<String> symbols, LocalDate start, LocalDate end) {
+    public SyncJobDto startSyncStocks(String index, List<String> symbols, LocalDate start, LocalDate end) {
         String joined = String.join(",", symbols);
         List<String> args = List.of(
                 "main.py",
                 "db-full-prices",
+                "--index", index,
                 "--interval", "1d",
                 "--start", start.toString(),
                 "--end", end.toString(),

@@ -4,6 +4,7 @@ import com.stock.platform.backend_api.api.dto.BarDto;
 import com.stock.platform.backend_api.repository.MarketRepository;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,8 +21,9 @@ public class IndexController {
         this.marketRepository = marketRepository;
     }
 
-    @GetMapping("/sp500/bars")
-    public List<BarDto> getSp500Bars(
+    @GetMapping("/{symbol}/bars")
+    public List<BarDto> getIndexBars(
+            @PathVariable String symbol,
             @RequestParam(defaultValue = "1d") String interval,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end
@@ -31,7 +33,12 @@ public class IndexController {
         if (effectiveStart.isAfter(effectiveEnd)) {
             throw new IllegalArgumentException("start must be <= end");
         }
-        return marketRepository.getBarsBySymbol("^SPX", interval, effectiveStart, effectiveEnd);
+        
+        String canonicalSymbol = symbol.toUpperCase();
+        if ("SP500".equals(canonicalSymbol)) canonicalSymbol = "^SPX";
+        if (!canonicalSymbol.startsWith("^")) canonicalSymbol = "^" + canonicalSymbol;
+
+        return marketRepository.getBarsBySymbol(canonicalSymbol, interval, effectiveStart, effectiveEnd);
     }
 }
 

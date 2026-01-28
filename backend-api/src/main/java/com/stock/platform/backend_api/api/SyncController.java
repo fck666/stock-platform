@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
@@ -28,20 +29,46 @@ public class SyncController {
     @PostMapping("/sp500-index")
     public SyncJobDto syncSp500Index() {
         LocalDate end = LocalDate.now().minusDays(1);
-        return dataCollectorService.startSyncIndices(DEFAULT_START, end);
+        return dataCollectorService.startSyncIndices("^SPX", DEFAULT_START, end);
+    }
+
+    @PostMapping("/wiki")
+    public SyncJobDto syncWiki(@RequestParam(defaultValue = "^SPX") String index) {
+        return dataCollectorService.startSyncWiki(index.toUpperCase());
+    }
+
+    @PostMapping("/prices")
+    public SyncJobDto syncPrices(@RequestParam(defaultValue = "^SPX") String index) {
+        String indexSymbol = index.toUpperCase();
+        int daysAgo = "^HSI".equals(indexSymbol) ? 2 : 1;
+        LocalDate end = LocalDate.now().minusDays(daysAgo);
+        return dataCollectorService.startSyncIndexPrices(indexSymbol, DEFAULT_START, end);
     }
 
     @PostMapping("/stocks/{symbol}")
-    public SyncJobDto syncSingleStock(@PathVariable String symbol) {
-        LocalDate end = LocalDate.now().minusDays(1);
-        return dataCollectorService.startSyncStock(symbol.toUpperCase(), DEFAULT_START, end);
+    public SyncJobDto syncSingleStock(
+            @PathVariable String symbol,
+            @RequestParam(defaultValue = "^SPX") String index
+    ) {
+        String indexSymbol = index.toUpperCase();
+        int daysAgo = "^HSI".equals(indexSymbol) ? 2 : 1;
+        LocalDate end = LocalDate.now().minusDays(daysAgo);
+        return dataCollectorService.startSyncStock(indexSymbol, symbol.toUpperCase(), DEFAULT_START, end);
     }
 
     @PostMapping("/stocks")
-    public SyncJobDto syncStocks(@Valid @RequestBody SyncStocksRequest request) {
-        LocalDate end = LocalDate.now().minusDays(1);
-        List<String> symbols = request.symbols().stream().map(s -> s == null ? "" : s.trim().toUpperCase()).filter(s -> !s.isBlank()).toList();
-        return dataCollectorService.startSyncStocks(symbols, DEFAULT_START, end);
+    public SyncJobDto syncStocks(
+            @Valid @RequestBody SyncStocksRequest request,
+            @RequestParam(defaultValue = "^SPX") String index
+    ) {
+        String indexSymbol = index.toUpperCase();
+        int daysAgo = "^HSI".equals(indexSymbol) ? 2 : 1;
+        LocalDate end = LocalDate.now().minusDays(daysAgo);
+        List<String> symbols = request.symbols().stream()
+                .map(s -> s == null ? "" : s.trim().toUpperCase())
+                .filter(s -> !s.isBlank())
+                .toList();
+        return dataCollectorService.startSyncStocks(indexSymbol, symbols, DEFAULT_START, end);
     }
 
     @GetMapping("/jobs/{jobId}")

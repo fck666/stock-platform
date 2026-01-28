@@ -7,6 +7,9 @@ from config.settings import load_settings
 from services.full_sync import run_full_sync
 from services.db_sync import (
     sync_indices_prices_to_db,
+    sync_index_daily_incremental,
+    sync_index_prices_to_db,
+    sync_index_wiki_to_db,
     sync_sp500_daily_incremental,
     sync_sp500_prices_to_db,
     sync_sp500_wiki_to_db,
@@ -43,11 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     wiki = sub.add_parser("db-sync-wiki")
     wiki.add_argument("--db-dsn", default=None)
+    wiki.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     wiki.add_argument("--limit", type=int, default=None)
     wiki.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
 
     prices = sub.add_parser("db-full-prices")
     prices.add_argument("--db-dsn", default=None)
+    prices.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     prices.add_argument("--start", dest="start_date", default="2016-01-01", help="YYYY-MM-DD")
     prices.add_argument("--end", dest="end_date", default="2025-12-31", help="YYYY-MM-DD")
     prices.add_argument("--interval", default="1d", choices=["1d", "1w", "1m", "1q", "1y"])
@@ -57,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     daily = sub.add_parser("db-daily-sync")
     daily.add_argument("--db-dsn", default=None)
+    daily.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     daily.add_argument("--interval", default="1d", choices=["1d", "1w", "1m", "1q", "1y"])
     daily.add_argument("--limit", type=int, default=None)
     daily.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
@@ -104,8 +110,9 @@ def main() -> int:
         db_dsn = args.db_dsn or settings.db_dsn
         if not db_dsn:
             raise RuntimeError("DB_DSN is not configured")
-        sync_sp500_wiki_to_db(
+        sync_index_wiki_to_db(
             db_dsn=db_dsn,
+            index_symbol=args.index,
             symbols=_parse_csv_list(args.symbols),
             limit=args.limit,
             wiki_lang=settings.wiki_lang,
@@ -118,8 +125,9 @@ def main() -> int:
         db_dsn = args.db_dsn or settings.db_dsn
         if not db_dsn:
             raise RuntimeError("DB_DSN is not configured")
-        sync_sp500_prices_to_db(
+        sync_index_prices_to_db(
             db_dsn=db_dsn,
+            index_symbol=args.index,
             start_date=args.start_date,
             end_date=args.end_date,
             interval=args.interval,
@@ -135,8 +143,9 @@ def main() -> int:
         db_dsn = args.db_dsn or settings.db_dsn
         if not db_dsn:
             raise RuntimeError("DB_DSN is not configured")
-        sync_sp500_daily_incremental(
+        sync_index_daily_incremental(
             db_dsn=db_dsn,
+            index_symbol=args.index,
             interval=args.interval,
             symbols=_parse_csv_list(args.symbols),
             limit=args.limit,

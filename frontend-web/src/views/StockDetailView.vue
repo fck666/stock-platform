@@ -63,6 +63,16 @@ function updateChartHeight() {
   chartHeight.value = clamp(Math.floor(window.innerHeight - 360), 520, 900)
 }
 
+function hasValue(val: any) {
+  if (val === null || val === undefined) return false
+  const s = String(val).trim()
+  return s !== '' && s !== '-' && s !== 'NaN'
+}
+
+const isSp500 = computed(() => {
+  return detail.value?.identifiers?.some(i => i.provider === 'stooq' && !i.identifier.endsWith('.HK'))
+})
+
 async function loadAll() {
   if (!symbol.value) return
   loading.value = true
@@ -111,9 +121,11 @@ watch(symbol, () => loadAll())
     <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
       <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div>
-          <div style="font-size: 16px; font-weight: 700">{{ symbol }} - {{ detail?.name || '-' }}</div>
-          <div style="color: #667085; margin-top: 4px">{{ detail?.wikiDescription || '' }}</div>
-          <div style="display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap">
+          <div style="font-size: 18px; font-weight: 700">{{ symbol }} - {{ detail?.name || '-' }}</div>
+          <div v-if="hasValue(detail?.wikiDescription)" style="color: #667085; margin-top: 6px; font-size: 14px; line-height: 1.5">
+            {{ detail?.wikiDescription }}
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap">
             <el-date-picker v-model="start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width: 150px" />
             <el-date-picker v-model="end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width: 150px" />
             <el-button :loading="loading" @click="loadAll">应用</el-button>
@@ -141,21 +153,22 @@ watch(symbol, () => loadAll())
         <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="代码">{{ detail?.symbol || symbol }}</el-descriptions-item>
-            <el-descriptions-item label="公司">{{ detail?.name || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="行业">{{ detail?.gicsSector || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="子行业">{{ detail?.gicsSubIndustry || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总部">{{ detail?.headquarters || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="加入标普500">{{ detail?.dateFirstAdded || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="CIK">{{ detail?.cik || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Founded">{{ detail?.founded || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Wikipedia">
-              <a v-if="detail?.wikiUrl" :href="detail.wikiUrl" target="_blank" rel="noreferrer">{{ detail.wikiTitle || detail.wikiUrl }}</a>
-              <span v-else>-</span>
+            <el-descriptions-item label="公司" v-if="hasValue(detail?.name)">{{ detail?.name }}</el-descriptions-item>
+            <el-descriptions-item label="行业" v-if="hasValue(detail?.gicsSector)">{{ detail?.gicsSector }}</el-descriptions-item>
+            <el-descriptions-item label="子行业" v-if="hasValue(detail?.gicsSubIndustry)">{{ detail?.gicsSubIndustry }}</el-descriptions-item>
+            <el-descriptions-item label="总部" v-if="hasValue(detail?.headquarters)">{{ detail?.headquarters }}</el-descriptions-item>
+            <el-descriptions-item :label="isSp500 ? '加入标普500' : '纳入指数日期'" v-if="hasValue(detail?.dateFirstAdded)">
+              {{ detail?.dateFirstAdded }}
+            </el-descriptions-item>
+            <el-descriptions-item label="CIK" v-if="hasValue(detail?.cik)">{{ detail?.cik }}</el-descriptions-item>
+            <el-descriptions-item label="Founded" v-if="hasValue(detail?.founded)">{{ detail?.founded }}</el-descriptions-item>
+            <el-descriptions-item label="Wikipedia" v-if="hasValue(detail?.wikiUrl)">
+              <a :href="detail!.wikiUrl!" target="_blank" rel="noreferrer">{{ detail?.wikiTitle || detail?.wikiUrl }}</a>
             </el-descriptions-item>
           </el-descriptions>
         </el-card>
 
-        <el-card shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
+        <el-card v-if="detail?.identifiers && detail.identifiers.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">标识符</div>
           <el-table :data="detail?.identifiers || []" size="small" style="width: 100%">
             <el-table-column prop="provider" label="provider" width="120" />
@@ -163,10 +176,10 @@ watch(symbol, () => loadAll())
           </el-table>
         </el-card>
 
-        <el-card shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
+        <el-card v-if="hasValue(detail?.wikiExtract)" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">摘要</div>
           <div style="color: #667085; white-space: pre-wrap; line-height: 1.6">
-            {{ detail?.wikiExtract || '-' }}
+            {{ detail?.wikiExtract }}
           </div>
         </el-card>
       </el-col>

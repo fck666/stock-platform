@@ -22,10 +22,18 @@ const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const selectedSymbols = computed(() => selected.value.map((r) => r.symbol))
 const allSelectedOnPage = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
 
+const indices = [
+  { symbol: '^SPX', name: 'S&P 500' },
+  { symbol: '^HSI', name: '恒生指数' },
+  { symbol: '^HSTECH', name: '恒生科技' },
+]
+const activeIndex = ref('^SPX')
+
 async function load() {
   loading.value = true
   try {
     const res = await listStocks({
+      index: activeIndex.value,
       query: query.value.trim() || undefined,
       page: page.value - 1,
       size: size.value,
@@ -64,7 +72,7 @@ async function syncSelected() {
   }
   syncing.value = true
   try {
-    const job = await syncStocks(selectedSymbols.value)
+    const job = await syncStocks(selectedSymbols.value, activeIndex.value)
     ElMessage.success(`已触发同步任务：${job.jobId}`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '同步失败')
@@ -80,10 +88,14 @@ onMounted(() => {
 
 <template>
   <el-space direction="vertical" style="width: 100%" :size="16" fill>
+    <el-tabs v-model="activeIndex" type="card" @tab-change="page = 1; load()">
+      <el-tab-pane v-for="idx in indices" :key="idx.symbol" :label="idx.name" :name="idx.symbol" />
+    </el-tabs>
+
     <el-card shadow="never" style="border-radius: 12px">
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div>
-          <div style="font-size: 16px; font-weight: 700">标普500股票列表</div>
+          <div style="font-size: 16px; font-weight: 700">股票列表 ({{ indices.find(i => i.symbol === activeIndex)?.name }})</div>
           <div style="color: #667085; margin-top: 4px">支持搜索、分页、选择当前页并批量同步日线数据</div>
         </div>
         <el-space>

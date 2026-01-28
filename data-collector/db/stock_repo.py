@@ -62,6 +62,69 @@ class StockRepository:
             cur.execute(sql, (security_id, provider, identifier, is_primary))
         self._conn.commit()
 
+    def upsert_index_membership(
+        self,
+        *,
+        index_id: int,
+        security_id: int,
+        as_of_date: date,
+        date_first_added: date | None = None,
+    ) -> None:
+        sql = """
+        INSERT INTO index_membership (index_id, security_id, as_of_date, date_first_added)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (index_id, security_id, as_of_date)
+        DO UPDATE SET
+            date_first_added = EXCLUDED.date_first_added;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (index_id, security_id, as_of_date, date_first_added))
+        self._conn.commit()
+
+    def upsert_security_detail(
+        self,
+        *,
+        security_id: int,
+        sector: str | None = None,
+        sub_industry: str | None = None,
+        headquarters: str | None = None,
+        cik: str | None = None,
+        founded: str | None = None,
+        wiki_url: str | None = None,
+        stooq_symbol: str | None = None,
+    ) -> None:
+        sql = """
+        INSERT INTO security_detail (
+            security_id, sector, sub_industry, headquarters, cik, founded, wiki_url, stooq_symbol
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (security_id)
+        DO UPDATE SET
+            sector = EXCLUDED.sector,
+            sub_industry = EXCLUDED.sub_industry,
+            headquarters = EXCLUDED.headquarters,
+            cik = EXCLUDED.cik,
+            founded = EXCLUDED.founded,
+            wiki_url = EXCLUDED.wiki_url,
+            stooq_symbol = EXCLUDED.stooq_symbol,
+            updated_at = now();
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    security_id,
+                    sector,
+                    sub_industry,
+                    headquarters,
+                    cik,
+                    founded,
+                    wiki_url,
+                    stooq_symbol,
+                ),
+            )
+        self._conn.commit()
+
     def upsert_sp500_membership(
         self,
         *,
@@ -77,42 +140,24 @@ class StockRepository:
         wiki_url: str | None,
         stooq_symbol: str | None,
     ) -> None:
-        sql = """
-        INSERT INTO sp500_membership (
-            security_id, as_of_date, security_name, gics_sector, gics_sub_industry,
-            headquarters, date_first_added, cik, founded, wiki_url, stooq_symbol
+        # Keep for backward compatibility but redirect to new tables
+        sp500_id = self.upsert_security(security_type="INDEX", canonical_symbol="^SPX", name="S&P 500")
+        self.upsert_index_membership(
+            index_id=sp500_id,
+            security_id=security_id,
+            as_of_date=as_of_date,
+            date_first_added=date_first_added,
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (security_id, as_of_date)
-        DO UPDATE SET
-            security_name = EXCLUDED.security_name,
-            gics_sector = EXCLUDED.gics_sector,
-            gics_sub_industry = EXCLUDED.gics_sub_industry,
-            headquarters = EXCLUDED.headquarters,
-            date_first_added = EXCLUDED.date_first_added,
-            cik = EXCLUDED.cik,
-            founded = EXCLUDED.founded,
-            wiki_url = EXCLUDED.wiki_url,
-            stooq_symbol = EXCLUDED.stooq_symbol;
-        """
-        with self._conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    security_id,
-                    as_of_date,
-                    security_name,
-                    gics_sector,
-                    gics_sub_industry,
-                    headquarters,
-                    date_first_added,
-                    cik,
-                    founded,
-                    wiki_url,
-                    stooq_symbol,
-                ),
-            )
-        self._conn.commit()
+        self.upsert_security_detail(
+            security_id=security_id,
+            sector=gics_sector,
+            sub_industry=gics_sub_industry,
+            headquarters=headquarters,
+            cik=cik,
+            founded=founded,
+            wiki_url=wiki_url,
+            stooq_symbol=stooq_symbol,
+        )
 
     def upsert_wiki_summary(
         self,
@@ -163,14 +208,22 @@ class StockRepository:
         stooq_symbol: str
         security_name: str | None
 
-    def list_latest_sp500_constituents(
+    @dataclass(frozen=True)
+    class IndexConstituent:
+        security_id: int
+        canonical_symbol: str
+        stooq_symbol: str
+        security_name: str | None
+
+    def list_latest_index_constituents(
         self,
         *,
+        index_symbol: str,
         symbols: Iterable[str] | None = None,
         limit: int | None = None,
-    ) -> list["StockRepository.Sp500Constituent"]:
-        where = ["s.security_type = 'STOCK'"]
-        params: list[object] = []
+    ) -> list["StockRepository.IndexConstituent"]:
+        where = ["s.security_type = 'STOCK'", "idx.canonical_symbol = %s"]
+        params: list[object] = [index_symbol]
 
         if symbols:
             symbol_list = [s.strip().upper() for s in symbols if s.strip()]
@@ -179,7 +232,11 @@ class StockRepository:
 
         sql = f"""
         WITH latest AS (
-            SELECT max(as_of_date) AS as_of_date FROM sp500_membership
+            SELECT m.index_id, max(m.as_of_date) AS as_of_date 
+            FROM index_membership m
+            JOIN security idx ON idx.id = m.index_id
+            WHERE idx.canonical_symbol = %s
+            GROUP BY m.index_id
         )
         SELECT
             s.id AS security_id,
@@ -188,22 +245,25 @@ class StockRepository:
             s.name AS security_name
         FROM security s
         JOIN latest l ON TRUE
-        JOIN sp500_membership m ON m.security_id = s.id AND m.as_of_date = l.as_of_date
+        JOIN index_membership m ON m.security_id = s.id AND m.index_id = l.index_id AND m.as_of_date = l.as_of_date
+        JOIN security idx ON idx.id = m.index_id
         JOIN security_identifier si ON si.security_id = s.id AND si.provider = 'stooq'
         WHERE {" AND ".join(where)}
         ORDER BY s.canonical_symbol;
         """
+        # Add index_symbol again for the WITH clause parameter
+        params = [index_symbol] + params
 
         if limit is not None and limit > 0:
             sql = sql.rstrip().rstrip(";") + " LIMIT %s;"
             params.append(limit)
 
-        out: list[StockRepository.Sp500Constituent] = []
+        out: list[StockRepository.IndexConstituent] = []
         with self._conn.cursor() as cur:
             cur.execute(sql, params)
             for security_id, canonical_symbol, stooq_symbol, security_name in cur.fetchall():
                 out.append(
-                    StockRepository.Sp500Constituent(
+                    StockRepository.IndexConstituent(
                         security_id=int(security_id),
                         canonical_symbol=str(canonical_symbol),
                         stooq_symbol=str(stooq_symbol),
@@ -211,6 +271,24 @@ class StockRepository:
                     )
                 )
         return out
+
+    def list_latest_sp500_constituents(
+        self,
+        *,
+        symbols: Iterable[str] | None = None,
+        limit: int | None = None,
+    ) -> list["StockRepository.Sp500Constituent"]:
+        # Backward compatibility
+        constituents = self.list_latest_index_constituents(index_symbol="^SPX", symbols=symbols, limit=limit)
+        return [
+            StockRepository.Sp500Constituent(
+                security_id=c.security_id,
+                canonical_symbol=c.canonical_symbol,
+                stooq_symbol=c.stooq_symbol,
+                security_name=c.security_name,
+            )
+            for c in constituents
+        ]
 
     @dataclass(frozen=True)
     class PriceBarRow:
