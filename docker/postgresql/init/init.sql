@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS market.security_detail (
     founded TEXT,
     wiki_url TEXT,
     stooq_symbol TEXT,
+    shares_outstanding BIGINT,
+    market_cap NUMERIC(20,2),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -80,3 +82,13 @@ CREATE INDEX IF NOT EXISTS idx_price_bar_security_interval_date
 CREATE INDEX IF NOT EXISTS idx_price_bar_interval_date
     ON market.price_bar (interval, bar_date);
 
+CREATE TABLE IF NOT EXISTS market.dividend (
+    id BIGSERIAL PRIMARY KEY,
+    security_id BIGINT NOT NULL REFERENCES market.security(id) ON DELETE CASCADE,
+    ex_date DATE NOT NULL,
+    amount NUMERIC(20,6),
+    dividend_type TEXT,
+    raw_text TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (security_id, ex_date, dividend_type)
+);

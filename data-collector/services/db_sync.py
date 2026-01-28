@@ -11,6 +11,7 @@ import requests
 from collectors.sp500_list import fetch_sp500_companies, filter_symbols
 from collectors.hangseng_list import fetch_hsi_components, fetch_hstech_components
 from collectors.stooq_price import fetch_prices_range
+from collectors.stooq_operations import fetch_stooq_operations, fetch_stooq_fundamentals
 from collectors.wiki_info import fetch_company_wiki_summaries
 from db.connection import DbConfig, get_connection
 from db.stock_repo import StockRepository
@@ -127,6 +128,31 @@ def sync_index_wiki_to_db(
             wiki_url = str(r.get("wiki_url") or "").strip() or None
             if stooq_symbol:
                 repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
+
+                # Also sync dividends and fundamentals from Stooq
+                try:
+                    with requests.Session() as http:
+                        # 1. Fundamentals (Market Cap, Shares)
+                        fund = fetch_stooq_fundamentals(http, stooq_symbol, http_timeout_seconds, user_agent)
+                        repo.upsert_security_detail(
+                            security_id=security_id,
+                            shares_outstanding=fund.get("shares_outstanding"),
+                            market_cap=fund.get("market_cap")
+                        )
+
+                        # 2. Operations (Dividends, Splits)
+                        ops_df = fetch_stooq_operations(http, stooq_symbol, http_timeout_seconds, user_agent)
+                        for _, op in ops_df.iterrows():
+                            repo.upsert_dividend(
+                                security_id=security_id,
+                                ex_date=op["ex_date"],
+                                amount=op["amount"],
+                                dividend_type=op["type"],
+                                raw_text=op["raw_text"]
+                            )
+                        log.info("Synced fundamentals and %s operations for %s", len(ops_df), stooq_symbol)
+                except Exception as e:
+                    log.warning("Failed syncing operations for %s: %s", stooq_symbol, e)
             if wiki_url:
                 repo.upsert_security_identifier(security_id=security_id, provider="wikipedia", identifier=wiki_url)
 

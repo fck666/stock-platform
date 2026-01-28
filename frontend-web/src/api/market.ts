@@ -30,6 +30,13 @@ export type SecurityIdentifierDto = {
   identifier: string
 }
 
+export type DividendDto = {
+  exDate: string
+  amount: number | null
+  type: string
+  rawText: string | null
+}
+
 export type StockDetailDto = {
   symbol: string
   name: string | null
@@ -43,7 +50,10 @@ export type StockDetailDto = {
   wikiTitle: string | null
   wikiDescription: string | null
   wikiExtract: string | null
+  sharesOutstanding: number | null
+  marketCap: number | null
   identifiers: SecurityIdentifierDto[]
+  dividends: DividendDto[]
 }
 
 export type SyncJobDto = {

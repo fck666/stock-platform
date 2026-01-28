@@ -92,21 +92,26 @@ class StockRepository:
         founded: str | None = None,
         wiki_url: str | None = None,
         stooq_symbol: str | None = None,
+        shares_outstanding: int | None = None,
+        market_cap: float | None = None,
     ) -> None:
         sql = """
         INSERT INTO security_detail (
-            security_id, sector, sub_industry, headquarters, cik, founded, wiki_url, stooq_symbol
+            security_id, sector, sub_industry, headquarters, cik, founded, wiki_url, stooq_symbol,
+            shares_outstanding, market_cap
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (security_id)
         DO UPDATE SET
-            sector = EXCLUDED.sector,
-            sub_industry = EXCLUDED.sub_industry,
-            headquarters = EXCLUDED.headquarters,
-            cik = EXCLUDED.cik,
-            founded = EXCLUDED.founded,
-            wiki_url = EXCLUDED.wiki_url,
-            stooq_symbol = EXCLUDED.stooq_symbol,
+            sector = COALESCE(EXCLUDED.sector, security_detail.sector),
+            sub_industry = COALESCE(EXCLUDED.sub_industry, security_detail.sub_industry),
+            headquarters = COALESCE(EXCLUDED.headquarters, security_detail.headquarters),
+            cik = COALESCE(EXCLUDED.cik, security_detail.cik),
+            founded = COALESCE(EXCLUDED.founded, security_detail.founded),
+            wiki_url = COALESCE(EXCLUDED.wiki_url, security_detail.wiki_url),
+            stooq_symbol = COALESCE(EXCLUDED.stooq_symbol, security_detail.stooq_symbol),
+            shares_outstanding = COALESCE(EXCLUDED.shares_outstanding, security_detail.shares_outstanding),
+            market_cap = COALESCE(EXCLUDED.market_cap, security_detail.market_cap),
             updated_at = now();
         """
         with self._conn.cursor() as cur:
@@ -121,6 +126,8 @@ class StockRepository:
                     founded,
                     wiki_url,
                     stooq_symbol,
+                    shares_outstanding,
+                    market_cap,
                 ),
             )
         self._conn.commit()
@@ -187,6 +194,12 @@ class StockRepository:
             cur.execute(sql, (security_id, lang, source_url, title, description, extract, page_id))
         self._conn.commit()
 
+    def get_stooq_symbol(self, security_id: int) -> str | None:
+        sql = "SELECT identifier FROM security_identifier WHERE security_id = %s AND provider = 'stooq';"
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id,))
+            row = cur.fetchone()
+        return row[0] if row else None
     def get_security_id_by_identifier(self, *, provider: str, identifier: str) -> int | None:
         sql = "SELECT security_id FROM security_identifier WHERE provider = %s AND identifier = %s;"
         with self._conn.cursor() as cur:
@@ -320,6 +333,27 @@ class StockRepository:
         volume: int | None
         currency: str | None
         source: str
+
+    def upsert_dividend(
+        self,
+        *,
+        security_id: int,
+        ex_date: date,
+        amount: float | None,
+        dividend_type: str,
+        raw_text: str | None = None,
+    ) -> None:
+        sql = """
+        INSERT INTO dividend (security_id, ex_date, amount, dividend_type, raw_text)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (security_id, ex_date, dividend_type)
+        DO UPDATE SET
+            amount = EXCLUDED.amount,
+            raw_text = EXCLUDED.raw_text;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, ex_date, amount, dividend_type, raw_text))
+        self._conn.commit()
 
     def upsert_price_bars(self, rows: Iterable["StockRepository.PriceBarRow"]) -> int:
         rows_list = list(rows)

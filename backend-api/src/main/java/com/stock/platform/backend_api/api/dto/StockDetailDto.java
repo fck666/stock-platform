@@ -1,5 +1,6 @@
 package com.stock.platform.backend_api.api.dto;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -16,7 +17,10 @@ public record StockDetailDto(
         String wikiTitle,
         String wikiDescription,
         String wikiExtract,
-        List<SecurityIdentifierDto> identifiers
+        Long sharesOutstanding,
+        BigDecimal marketCap,
+        List<SecurityIdentifierDto> identifiers,
+        List<DividendDto> dividends
 ) {
 }
 

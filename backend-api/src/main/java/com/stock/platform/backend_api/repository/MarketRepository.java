@@ -152,7 +152,9 @@ public class MarketRepository {
                     sd.wiki_url,
                     ws.title as wiki_title,
                     ws.description as wiki_description,
-                    ws.extract as wiki_extract
+                    ws.extract as wiki_extract,
+                    sd.shares_outstanding,
+                    sd.market_cap
                 from market.security s
                 left join market.security_detail sd on sd.security_id = s.id
                 left join market.index_membership m on m.security_id = s.id
@@ -166,6 +168,7 @@ public class MarketRepository {
                     if (!rs.next()) return null;
                     long securityId = rs.getLong("security_id");
                     List<SecurityIdentifierDto> identifiers = listIdentifiers(securityId);
+                    List<DividendDto> dividends = listDividends(securityId);
                     return new StockDetailDto(
                             rs.getString("symbol"),
                             rs.getString("name"),
@@ -179,7 +182,10 @@ public class MarketRepository {
                             rs.getString("wiki_title"),
                             rs.getString("wiki_description"),
                             rs.getString("wiki_extract"),
-                            identifiers
+                            rs.getObject("shares_outstanding", Long.class),
+                            rs.getBigDecimal("market_cap"),
+                            identifiers,
+                            dividends
                     );
                 }
         );
@@ -197,10 +203,28 @@ public class MarketRepository {
                 select provider, identifier
                 from market.security_identifier
                 where security_id = :securityId
-                order by provider, identifier
                 """,
                 params,
                 (rs, rowNum) -> new SecurityIdentifierDto(rs.getString("provider"), rs.getString("identifier"))
+        );
+    }
+
+    public List<DividendDto> listDividends(long securityId) {
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("securityId", securityId);
+        return jdbc.query(
+                """
+                select ex_date, amount, dividend_type, raw_text
+                from market.dividend
+                where security_id = :securityId
+                order by ex_date desc
+                """,
+                params,
+                (rs, rowNum) -> new DividendDto(
+                        rs.getObject("ex_date", LocalDate.class),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("dividend_type"),
+                        rs.getString("raw_text")
+                )
         );
     }
 
