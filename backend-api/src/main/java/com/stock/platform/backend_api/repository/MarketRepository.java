@@ -8,7 +8,15 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.temporal.WeekFields;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -247,6 +255,21 @@ public class MarketRepository {
         long securityId = findSecurityIdBySymbol(canonicalSymbol)
                 .orElseThrow(() -> new IllegalArgumentException("Security not found: " + canonicalSymbol));
 
+        String iv = interval == null ? "1d" : interval.toLowerCase(Locale.ROOT);
+        if (!iv.equals("1d")) {
+            List<BarDto> daily = getBarsBySecurityId(securityId, "1d", start, end);
+            return aggregateIfNeeded(daily, iv);
+        }
+
+        return getBarsBySecurityId(securityId, "1d", start, end);
+    }
+
+    private List<BarDto> getBarsBySecurityId(
+            long securityId,
+            String interval,
+            LocalDate start,
+            LocalDate end
+    ) {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("securityId", securityId)
                 .addValue("interval", interval)
@@ -265,6 +288,86 @@ public class MarketRepository {
                 params,
                 BAR_MAPPER
         );
+    }
+
+    private static List<BarDto> aggregateIfNeeded(List<BarDto> daily, String interval) {
+        if (interval.equals("1w")) return aggregateWeekly(daily);
+        if (interval.equals("1m")) return aggregateMonthly(daily);
+        if (interval.equals("1q")) return aggregateQuarterly(daily);
+        if (interval.equals("1y")) return aggregateYearly(daily);
+        throw new IllegalArgumentException("interval must be one of: 1d, 1w, 1m, 1q, 1y");
+    }
+
+    private static List<BarDto> aggregateWeekly(List<BarDto> daily) {
+        WeekFields wf = WeekFields.ISO;
+        Map<String, List<BarDto>> groups = new LinkedHashMap<>();
+        for (BarDto b : daily) {
+            LocalDate d = b.date();
+            int wy = d.get(wf.weekBasedYear());
+            int ww = d.get(wf.weekOfWeekBasedYear());
+            String key = wy + "-" + ww;
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(b);
+        }
+        return aggregateGroups(groups.values());
+    }
+
+    private static List<BarDto> aggregateMonthly(List<BarDto> daily) {
+        Map<YearMonth, List<BarDto>> groups = new LinkedHashMap<>();
+        for (BarDto b : daily) {
+            YearMonth ym = YearMonth.from(b.date());
+            groups.computeIfAbsent(ym, k -> new ArrayList<>()).add(b);
+        }
+        return aggregateGroups(groups.values());
+    }
+
+    private static List<BarDto> aggregateQuarterly(List<BarDto> daily) {
+        Map<String, List<BarDto>> groups = new LinkedHashMap<>();
+        for (BarDto b : daily) {
+            LocalDate d = b.date();
+            int q = (d.getMonthValue() - 1) / 3 + 1;
+            String key = d.getYear() + "-Q" + q;
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(b);
+        }
+        return aggregateGroups(groups.values());
+    }
+
+    private static List<BarDto> aggregateYearly(List<BarDto> daily) {
+        Map<Integer, List<BarDto>> groups = new LinkedHashMap<>();
+        for (BarDto b : daily) {
+            groups.computeIfAbsent(b.date().getYear(), k -> new ArrayList<>()).add(b);
+        }
+        return aggregateGroups(groups.values());
+    }
+
+    private static List<BarDto> aggregateGroups(Collection<List<BarDto>> groups) {
+        List<BarDto> out = new ArrayList<>();
+        for (List<BarDto> g : groups) {
+            if (g.isEmpty()) continue;
+            g.sort(Comparator.comparing(BarDto::date));
+            BarDto first = g.get(0);
+            BarDto last = g.get(g.size() - 1);
+            BigDecimal open = first.open();
+            BigDecimal close = last.close();
+            BigDecimal high = null;
+            BigDecimal low = null;
+            long vol = 0;
+            boolean hasVol = false;
+            for (BarDto b : g) {
+                if (b.high() != null) {
+                    high = high == null ? b.high() : high.max(b.high());
+                }
+                if (b.low() != null) {
+                    low = low == null ? b.low() : low.min(b.low());
+                }
+                if (b.volume() != null) {
+                    vol += b.volume();
+                    hasVol = true;
+                }
+            }
+            out.add(new BarDto(last.date(), open, high, low, close, hasVol ? vol : null));
+        }
+        out.sort(Comparator.comparing(BarDto::date));
+        return out;
     }
 
     private static final RowMapper<BarDto> BAR_MAPPER = (rs, rowNum) -> new BarDto(

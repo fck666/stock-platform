@@ -10,6 +10,10 @@ const props = defineProps<{
   windowStart?: number
   windowEnd?: number
   showSlider?: boolean
+  maLines?: Record<string, Array<number | null>>
+  subIndicator?: 'none' | 'macd' | 'kdj'
+  macd?: { dif: Array<number | null>; dea: Array<number | null>; hist: Array<number | null> } | null
+  kdj?: { k: Array<number | null>; d: Array<number | null>; j: Array<number | null> } | null
 }>()
 
 const elRef = ref<HTMLDivElement | null>(null)
@@ -151,15 +155,218 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
   })
 
   const showSlider = props.showSlider !== false
+  const sub = props.subIndicator ?? 'none'
+  const hasSub = sub !== 'none'
+  const grids: any[] = hasSub
+    ? [
+        { left: 84, right: 24, top: 40, height: '50%' },
+        { left: 84, right: 24, top: '67%', height: '10%' },
+        { left: 84, right: 24, top: '79%', height: '10%' },
+      ]
+    : [
+        { left: 84, right: 24, top: 40, height: '58%' },
+        { left: 84, right: 24, top: '70%', height: '14%' },
+      ]
+  const xAxes: any[] = [
+    {
+      type: 'category',
+      data: categories,
+      boundaryGap: true,
+      axisLine: { lineStyle: { color: '#cfd5e2' } },
+      axisLabel: { color: '#667085' },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      min: 'dataMin',
+      max: 'dataMax',
+    },
+    {
+      type: 'category',
+      gridIndex: hasSub ? 2 : 1,
+      data: categories,
+      boundaryGap: true,
+      axisLine: { lineStyle: { color: '#cfd5e2' } },
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      min: 'dataMin',
+      max: 'dataMax',
+    },
+  ]
+  if (hasSub) {
+    xAxes.splice(1, 0, {
+      type: 'category',
+      gridIndex: 1,
+      data: categories,
+      boundaryGap: true,
+      axisLine: { lineStyle: { color: '#cfd5e2' } },
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      min: 'dataMin',
+      max: 'dataMax',
+    })
+  }
+
+  const yAxes: any[] = [
+    {
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: '#667085', margin: 12 },
+      splitLine: { lineStyle: { color: '#eef1f6' } },
+    },
+    {
+      gridIndex: hasSub ? 2 : 1,
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: '#667085',
+        margin: 12,
+        formatter: (v: number) => {
+          const abs = Math.abs(v)
+          if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`
+          if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+          if (abs >= 1_000) return `${(v / 1_000).toFixed(2)}K`
+          return String(v)
+        },
+      },
+      splitLine: { lineStyle: { color: '#eef1f6' } },
+    },
+  ]
+  if (hasSub) {
+    yAxes.splice(1, 0, {
+      gridIndex: 1,
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: '#667085', margin: 12 },
+      splitLine: { lineStyle: { color: '#eef1f6' } },
+    })
+  }
+
+  const series: any[] = [
+    {
+      name: 'K',
+      type: 'candlestick',
+      data: candle,
+      itemStyle: {
+        color: '#26a69a',
+        color0: '#ef5350',
+        borderColor: '#26a69a',
+        borderColor0: '#ef5350',
+      },
+    },
+  ]
+
+  const maLines = props.maLines || {}
+  const maColors: Record<string, string> = {
+    '20': '#5b8ff9',
+    '60': '#61dca3',
+    '180': '#f6bd16',
+    '360': '#7262fd',
+  }
+  for (const [k, data] of Object.entries(maLines)) {
+    series.push({
+      name: `MA${k}`,
+      type: 'line',
+      data,
+      showSymbol: false,
+      smooth: true,
+      lineStyle: { width: 1, color: maColors[k] || '#667085' },
+      emphasis: { focus: 'series' },
+    })
+  }
+
+  if (hasSub && sub === 'macd' && props.macd) {
+    const macd = props.macd
+    series.push(
+      {
+        name: 'DIF',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: macd.dif,
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1, color: '#5b8ff9' },
+      },
+      {
+        name: 'DEA',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: macd.dea,
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1, color: '#f6bd16' },
+      },
+      {
+        name: 'HIST',
+        type: 'bar',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: macd.hist.map((v) => {
+          if (v === null || v === undefined) return null
+          return {
+            value: v,
+            itemStyle: { color: v >= 0 ? '#26a69a' : '#ef5350' },
+          }
+        }),
+        barWidth: '60%',
+      },
+    )
+  }
+  if (hasSub && sub === 'kdj' && props.kdj) {
+    const kdj = props.kdj
+    series.push(
+      {
+        name: 'K',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: kdj.k,
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1, color: '#5b8ff9' },
+      },
+      {
+        name: 'D',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: kdj.d,
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1, color: '#f6bd16' },
+      },
+      {
+        name: 'J',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: kdj.j,
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1, color: '#7262fd' },
+      },
+    )
+  }
+
+  series.push({
+    name: 'Volume',
+    type: 'bar',
+    xAxisIndex: hasSub ? 2 : 1,
+    yAxisIndex: hasSub ? 2 : 1,
+    data: volumes,
+    barWidth: '60%',
+  })
 
   return {
     title: title ? { text: title, left: 10, top: 6, textStyle: { fontSize: 14 } } : undefined,
     backgroundColor: '#ffffff',
     animation: false,
-    grid: [
-      { left: 84, right: 24, top: 40, height: '58%' },
-      { left: 84, right: 24, top: '70%', height: '14%' },
-    ],
+    grid: grids,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
@@ -168,62 +375,12 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       textStyle: { color: '#fff' },
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
-    xAxis: [
-      {
-        type: 'category',
-        data: categories,
-        boundaryGap: true,
-        axisLine: { lineStyle: { color: '#cfd5e2' } },
-        axisLabel: { color: '#667085' },
-        axisTick: { show: false },
-        splitLine: { show: false },
-        min: 'dataMin',
-        max: 'dataMax',
-      },
-      {
-        type: 'category',
-        gridIndex: 1,
-        data: categories,
-        boundaryGap: true,
-        axisLine: { lineStyle: { color: '#cfd5e2' } },
-        axisLabel: { show: false },
-        axisTick: { show: false },
-        splitLine: { show: false },
-        min: 'dataMin',
-        max: 'dataMax',
-      },
-    ],
-    yAxis: [
-      {
-        scale: true,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: { color: '#667085', margin: 12 },
-        splitLine: { lineStyle: { color: '#eef1f6' } },
-      },
-      {
-        gridIndex: 1,
-        scale: true,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          color: '#667085',
-          margin: 12,
-          formatter: (v: number) => {
-            const abs = Math.abs(v)
-            if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`
-            if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
-            if (abs >= 1_000) return `${(v / 1_000).toFixed(2)}K`
-            return String(v)
-          },
-        },
-        splitLine: { lineStyle: { color: '#eef1f6' } },
-      },
-    ],
+    xAxis: xAxes,
+    yAxis: yAxes,
     dataZoom: [
       {
         type: 'inside',
-        xAxisIndex: [0, 1],
+        xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
         start: zoomStart.value,
         end: zoomEnd.value,
         zoomOnMouseWheel: false,
@@ -232,35 +389,15 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       },
       {
         type: 'slider',
-        xAxisIndex: [0, 1],
+        xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
         start: zoomStart.value,
         end: zoomEnd.value,
-        top: '88%',
+        top: hasSub ? '90%' : '88%',
         height: 20,
         show: showSlider,
       },
     ],
-    series: [
-      {
-        name: 'K',
-        type: 'candlestick',
-        data: candle,
-        itemStyle: {
-          color: '#26a69a',
-          color0: '#ef5350',
-          borderColor: '#26a69a',
-          borderColor0: '#ef5350',
-        },
-      },
-      {
-        name: 'Volume',
-        type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: volumes,
-        barWidth: '60%',
-      },
-    ],
+    series,
   }
 }
 
@@ -310,7 +447,7 @@ onMounted(() => {
 })
 
 watch(
-  () => props.bars,
+  () => [props.bars, props.maLines, props.subIndicator, props.macd, props.kdj],
   () => render(),
   { deep: true },
 )

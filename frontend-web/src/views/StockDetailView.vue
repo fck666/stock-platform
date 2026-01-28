@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
-import { getStockBars, getStockDetail, syncStock, type BarDto, type StockDetailDto } from '../api/market'
+import { getStockBars, getStockDetail, getStockIndicators, syncStock, type BarDto, type IndicatorsResponseDto, type StockDetailDto } from '../api/market'
 
 const route = useRoute()
 
@@ -13,13 +13,24 @@ const loading = ref(false)
 const syncing = ref(false)
 const detail = ref<StockDetailDto | null>(null)
 const bars = ref<BarDto[]>([])
+const indicators = ref<IndicatorsResponseDto | null>(null)
+const indicatorLoading = ref(false)
 
-const title = computed(() => `${symbol.value} 日K`)
+const intervalLabel = computed(() => {
+  if (interval.value === '1w') return '周K'
+  if (interval.value === '1m') return '月K'
+  if (interval.value === '1q') return '季K'
+  if (interval.value === '1y') return '年K'
+  return '日K'
+})
+const title = computed(() => `${symbol.value} ${intervalLabel.value}`)
 
-const interval = ref<'1d'>('1d')
+const interval = ref<'1d' | '1w' | '1m' | '1q' | '1y'>('1d')
 const start = ref<string>('')
 const end = ref<string>('')
 const chartHeight = ref(600)
+const selectedMas = ref<number[]>([])
+const subIndicator = ref<'none' | 'macd' | 'kdj'>('none')
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(Math.max(n, min), max)
@@ -83,12 +94,135 @@ async function loadAll() {
       start: start.value || undefined,
       end: end.value || undefined,
     })
+    await loadIndicators()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
   } finally {
     loading.value = false
   }
 }
+
+function hasIndicatorsEnabled() {
+  return selectedMas.value.length > 0 || subIndicator.value !== 'none'
+}
+
+async function loadIndicators() {
+  if (!symbol.value) return
+  if (!bars.value || bars.value.length === 0) {
+    indicators.value = null
+    return
+  }
+  if (!hasIndicatorsEnabled()) {
+    indicators.value = null
+    return
+  }
+  indicatorLoading.value = true
+  try {
+    indicators.value = await getStockIndicators(symbol.value, {
+      interval: interval.value,
+      start: start.value || undefined,
+      end: end.value || undefined,
+      ma: selectedMas.value.join(',') || undefined,
+      include: subIndicator.value !== 'none' ? subIndicator.value : undefined,
+    })
+  } catch (e: any) {
+    indicators.value = null
+    ElMessage.error(e?.response?.data?.message ?? e?.message ?? '指标计算失败')
+  } finally {
+    indicatorLoading.value = false
+  }
+}
+
+function loadIndicatorConfig() {
+  try {
+    const raw = localStorage.getItem('stock_platform_indicator_config')
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    const mas = Array.isArray(parsed?.mas) ? parsed.mas : []
+    selectedMas.value = mas.map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x))
+    const sub = String(parsed?.sub || 'none') as any
+    subIndicator.value = sub === 'macd' || sub === 'kdj' ? sub : 'none'
+  } catch {}
+}
+
+function saveIndicatorConfig() {
+  try {
+    localStorage.setItem(
+      'stock_platform_indicator_config',
+      JSON.stringify({ mas: selectedMas.value, sub: subIndicator.value }),
+    )
+  } catch {}
+}
+
+watch(
+  () => [selectedMas.value, subIndicator.value],
+  () => {
+    saveIndicatorConfig()
+    loadIndicators()
+  },
+  { deep: true },
+)
+
+const indicatorByDate = computed(() => {
+  const map = new Map<string, any>()
+  const pts = indicators.value?.points || []
+  for (const p of pts) {
+    map.set(p.date, p)
+  }
+  return map
+})
+
+const maLines = computed(() => {
+  const out: Record<string, Array<number | null>> = {}
+  if (!hasIndicatorsEnabled()) return out
+  for (const p of selectedMas.value) {
+    const key = String(p)
+    out[key] = bars.value.map((b) => {
+      const pt = indicatorByDate.value.get(b.date)
+      const ma = pt?.ma
+      if (!ma) return null
+      const v = ma[key]
+      return v === null || v === undefined ? null : Number(v)
+    })
+  }
+  return out
+})
+
+const macdSeries = computed(() => {
+  if (subIndicator.value !== 'macd') return null
+  return {
+    dif: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.macd?.dif
+      return v === null || v === undefined ? null : Number(v)
+    }),
+    dea: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.macd?.dea
+      return v === null || v === undefined ? null : Number(v)
+    }),
+    hist: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.macd?.hist
+      return v === null || v === undefined ? null : Number(v)
+    }),
+  }
+})
+
+const kdjSeries = computed(() => {
+  if (subIndicator.value !== 'kdj') return null
+  return {
+    k: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.kdj?.k
+      return v === null || v === undefined ? null : Number(v)
+    }),
+    d: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.kdj?.d
+      return v === null || v === undefined ? null : Number(v)
+    }),
+    j: bars.value.map((b) => {
+      const v = indicatorByDate.value.get(b.date)?.kdj?.j
+      return v === null || v === undefined ? null : Number(v)
+    }),
+  }
+})
 
 async function triggerSync() {
   syncing.value = true
@@ -103,6 +237,7 @@ async function triggerSync() {
 }
 
 onMounted(() => {
+  loadIndicatorConfig()
   setDefaultRange()
   updateChartHeight()
   window.addEventListener('resize', updateChartHeight)
@@ -114,6 +249,7 @@ onBeforeUnmount(() => {
 })
 
 watch(symbol, () => loadAll())
+watch(interval, () => loadAll())
 </script>
 
 <template>
@@ -126,6 +262,13 @@ watch(symbol, () => loadAll())
             {{ detail?.wikiDescription }}
           </div>
           <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap">
+            <el-select v-model="interval" size="small" style="width: 110px">
+              <el-option label="日线" value="1d" />
+              <el-option label="周线" value="1w" />
+              <el-option label="月线" value="1m" />
+              <el-option label="季线" value="1q" />
+              <el-option label="年线" value="1y" />
+            </el-select>
             <el-date-picker v-model="start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width: 150px" />
             <el-date-picker v-model="end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width: 150px" />
             <el-button :loading="loading" @click="loadAll">应用</el-button>
@@ -143,9 +286,36 @@ watch(symbol, () => loadAll())
 
     <el-row :gutter="16" style="width: 100%">
       <el-col :xs="24" :md="14">
+        <el-card shadow="never" style="border-radius: 12px" v-loading="indicatorLoading">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+            <div style="font-weight: 700">指标</div>
+            <el-space wrap>
+              <el-checkbox-group v-model="selectedMas">
+                <el-checkbox :label="20">MA20</el-checkbox>
+                <el-checkbox :label="60">MA60</el-checkbox>
+                <el-checkbox :label="180">MA180</el-checkbox>
+                <el-checkbox :label="360">MA360</el-checkbox>
+              </el-checkbox-group>
+              <el-select v-model="subIndicator" size="small" style="width: 120px">
+                <el-option label="无副图" value="none" />
+                <el-option label="MACD" value="macd" />
+                <el-option label="KDJ" value="kdj" />
+              </el-select>
+            </el-space>
+          </div>
+        </el-card>
+
         <el-card shadow="never" style="border-radius: 12px" :body-style="{ padding: '0' }">
           <div v-loading="loading" :style="{ height: `${chartHeight}px`, overflow: 'hidden' }">
-            <CandlestickChart :bars="bars" :title="title" :height="chartHeight" />
+            <CandlestickChart
+              :bars="bars"
+              :title="title"
+              :height="chartHeight"
+              :ma-lines="maLines"
+              :sub-indicator="subIndicator"
+              :macd="macdSeries"
+              :kdj="kdjSeries"
+            />
           </div>
         </el-card>
       </el-col>

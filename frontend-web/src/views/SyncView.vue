@@ -13,6 +13,7 @@ let timer: any = null
 async function startJob(action: () => Promise<SyncJobDto>) {
   loading.value = true
   try {
+    if (import.meta.env.DEV) console.info('[sync] start')
     const job = await action()
     activeJobs.value.unshift(job)
     ElMessage.success(`任务已提交: ${job.jobId}`)
@@ -68,6 +69,9 @@ async function poll() {
   for (const job of activeJobs.value) {
     try {
       const updated = await getSyncJob(job.jobId)
+      if (import.meta.env.DEV && updated.status !== job.status) {
+        console.info('[sync] job', updated.jobId, { from: job.status, to: updated.status, exitCode: updated.exitCode })
+      }
       if (updated.status === 'SUCCEEDED' || updated.status === 'FAILED') {
         finishedJobs.value.unshift(updated)
       } else {

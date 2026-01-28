@@ -61,6 +61,30 @@ export type StockDetailDto = {
   corporateActions: CorporateActionDto[]
 }
 
+export type MacdDto = {
+  dif: number | null
+  dea: number | null
+  hist: number | null
+}
+
+export type KdjDto = {
+  k: number | null
+  d: number | null
+  j: number | null
+}
+
+export type IndicatorPointDto = {
+  date: string
+  ma: Record<string, number | null> | null
+  macd: MacdDto | null
+  kdj: KdjDto | null
+}
+
+export type IndicatorsResponseDto = {
+  interval: string
+  points: IndicatorPointDto[]
+}
+
 export type SyncJobDto = {
   jobId: string
   status: string
@@ -97,28 +121,46 @@ export async function getStockBars(symbol: string, params?: { start?: string; en
   return res.data
 }
 
+export async function getStockIndicators(
+  symbol: string,
+  params?: { start?: string; end?: string; interval?: string; ma?: string; include?: string }
+) {
+  const res = await http.get<IndicatorsResponseDto>(`/api/stocks/${encodeURIComponent(symbol)}/indicators`, { params })
+  return res.data
+}
+
 export async function syncWiki(index: string = '^SPX') {
+  if (import.meta.env.DEV) console.info('[api] POST /api/sync/wiki', { index })
   const res = await http.post<SyncJobDto>('/api/sync/wiki', null, { params: { index } })
+  if (import.meta.env.DEV) console.info('[api] <- /api/sync/wiki', { status: res.status, data: res.data })
   return res.data
 }
 
 export async function syncFundamentals(index: string = '^SPX') {
+  if (import.meta.env.DEV) console.info('[api] POST /api/sync/fundamentals', { index })
   const res = await http.post<SyncJobDto>('/api/sync/fundamentals', null, { params: { index } })
+  if (import.meta.env.DEV) console.info('[api] <- /api/sync/fundamentals', { status: res.status, data: res.data })
   return res.data
 }
 
 export async function syncPrices(index: string = '^SPX') {
+  if (import.meta.env.DEV) console.info('[api] POST /api/sync/prices', { index })
   const res = await http.post<SyncJobDto>('/api/sync/prices', null, { params: { index } })
+  if (import.meta.env.DEV) console.info('[api] <- /api/sync/prices', { status: res.status, data: res.data })
   return res.data
 }
 
 export async function syncStock(symbol: string, index: string = '^SPX') {
+  if (import.meta.env.DEV) console.info('[api] POST /api/sync/stocks/{symbol}', { symbol, index })
   const res = await http.post<SyncJobDto>(`/api/sync/stocks/${encodeURIComponent(symbol)}`, null, { params: { index } })
+  if (import.meta.env.DEV) console.info('[api] <- /api/sync/stocks/{symbol}', { status: res.status, data: res.data })
   return res.data
 }
 
 export async function syncStocks(symbols: string[], index: string = '^SPX') {
+  if (import.meta.env.DEV) console.info('[api] POST /api/sync/stocks', { index, count: symbols.length })
   const res = await http.post<SyncJobDto>('/api/sync/stocks', { symbols }, { params: { index } })
+  if (import.meta.env.DEV) console.info('[api] <- /api/sync/stocks', { status: res.status, data: res.data })
   return res.data
 }
 
