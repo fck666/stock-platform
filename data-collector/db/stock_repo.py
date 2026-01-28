@@ -402,6 +402,114 @@ class StockRepository:
             )
         self._conn.commit()
 
+    def has_fundamental_snapshot(
+        self,
+        *,
+        security_id: int,
+        as_of_date: date,
+        source: str = "yahoo",
+    ) -> bool:
+        sql = """
+        SELECT 1
+        FROM fundamental_snapshot
+        WHERE security_id = %s AND as_of_date = %s AND source = %s
+        LIMIT 1;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, as_of_date, source))
+            return cur.fetchone() is not None
+
+    def has_any_fundamental_snapshot(
+        self,
+        *,
+        security_id: int,
+        as_of_date: date,
+    ) -> bool:
+        sql = """
+        SELECT 1
+        FROM fundamental_snapshot
+        WHERE security_id = %s AND as_of_date = %s
+        LIMIT 1;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, as_of_date))
+            return cur.fetchone() is not None
+
+    def get_latest_corporate_action_ex_date(
+        self,
+        *,
+        security_id: int,
+        source: str = "yahoo",
+    ) -> date | None:
+        sql = """
+        SELECT max(ex_date) AS ex_date
+        FROM corporate_action
+        WHERE security_id = %s AND source = %s;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, source))
+            r = cur.fetchone()
+            return r[0] if r and r[0] is not None else None
+
+    def count_corporate_actions(
+        self,
+        *,
+        security_id: int,
+        source: str = "yahoo",
+    ) -> int:
+        sql = """
+        SELECT count(*) AS cnt
+        FROM corporate_action
+        WHERE security_id = %s AND source = %s;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, source))
+            r = cur.fetchone()
+            return int(r[0]) if r else 0
+
+    def get_security_cik(self, *, security_id: int) -> str | None:
+        sql = """
+        SELECT cik
+        FROM security_detail
+        WHERE security_id = %s;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id,))
+            r = cur.fetchone()
+            if not r or r[0] is None:
+                return None
+            s = str(r[0]).strip()
+            return s or None
+
+    def get_latest_close(self, *, security_id: int, interval: str = "1d") -> tuple[date, float] | None:
+        sql = """
+        SELECT bar_date, close
+        FROM price_bar
+        WHERE security_id = %s AND interval = %s AND close IS NOT NULL
+        ORDER BY bar_date DESC
+        LIMIT 1;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id, interval))
+            r = cur.fetchone()
+            if not r or r[0] is None or r[1] is None:
+                return None
+            return (r[0], float(r[1]))
+
+    def get_security_currency(self, *, security_id: int) -> str | None:
+        sql = """
+        SELECT currency
+        FROM security
+        WHERE id = %s;
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (security_id,))
+            r = cur.fetchone()
+            if not r or r[0] is None:
+                return None
+            s = str(r[0]).strip()
+            return s or None
+
     def upsert_price_bars(self, rows: Iterable["StockRepository.PriceBarRow"]) -> int:
         rows_list = list(rows)
         if not rows_list:

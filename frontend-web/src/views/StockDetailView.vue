@@ -86,11 +86,22 @@ const isSp500 = computed(() => {
   return detail.value?.identifiers?.some(i => i.provider === 'stooq' && !i.identifier.endsWith('.HK'))
 })
 
+const showAllCorporateActions = ref(false)
+const corporateActionsVisible = computed(() => {
+  const list = detail.value?.corporateActions || []
+  return showAllCorporateActions.value ? list : list.slice(0, 10)
+})
+const hasMoreCorporateActions = computed(() => {
+  const n = detail.value?.corporateActions?.length || 0
+  return n > 10
+})
+
 async function loadAll() {
   if (!symbol.value) return
   loading.value = true
   try {
     detail.value = await getStockDetail(symbol.value)
+    showAllCorporateActions.value = false
     bars.value = await getStockBars(symbol.value, {
       interval: interval.value,
       start: start.value || undefined,
@@ -357,7 +368,8 @@ watch(interval, () => loadAll())
 
         <el-card v-if="detail?.corporateActions && detail.corporateActions.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">分红与拆股</div>
-          <el-table :data="detail?.corporateActions || []" size="small" style="width: 100%">
+          <div style="height: 320px; overflow: hidden">
+            <el-table :data="corporateActionsVisible" size="small" style="width: 100%" max-height="280">
             <el-table-column prop="exDate" label="日期" width="100" />
             <el-table-column prop="actionType" label="类型" width="80" />
             <el-table-column label="金额/比例" width="120">
@@ -371,7 +383,13 @@ watch(interval, () => loadAll())
               </template>
             </el-table-column>
             <el-table-column prop="source" label="来源" width="80" />
-          </el-table>
+            </el-table>
+          </div>
+          <div v-if="hasMoreCorporateActions" style="margin-top: 8px; display: flex; justify-content: flex-end">
+            <el-button link type="primary" @click="showAllCorporateActions = !showAllCorporateActions">
+              {{ showAllCorporateActions ? '收起' : `展开全部（${detail?.corporateActions?.length || 0}条）` }}
+            </el-button>
+          </div>
         </el-card>
 
         <el-card v-if="hasValue(detail?.wikiExtract)" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">

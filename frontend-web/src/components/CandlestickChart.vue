@@ -162,21 +162,31 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
   const gap = 12
   const subPaneHeight = 130
   const volumeHeight = 110
-  const sliderArea = showSlider ? 44 : 16
-  const reserved = subCount * (subPaneHeight + gap) + (volumeHeight + gap) + sliderArea
-  const mainHeight = Math.max(260, totalHeight - topMain - reserved)
+  const axisLabelSpace = 26
+  const sliderBottom = 8
+  const sliderHeight = showSlider ? 20 : 0
+  const sliderGap = showSlider ? 6 : 0
+  const xLabelBottom = sliderBottom + sliderHeight + sliderGap
+  const volumeGridBottom = xLabelBottom + axisLabelSpace
+
+  const volumeTop = Math.max(topMain + 260 + gap, totalHeight - volumeGridBottom - volumeHeight)
+
+  const subTops: number[] = []
+  let curSubTop = volumeTop - gap - subPaneHeight
+  for (let i = 0; i < subCount; i++) {
+    subTops.push(curSubTop)
+    curSubTop -= subPaneHeight + gap
+  }
+  subTops.reverse()
+
+  const firstBelowMainTop = subCount > 0 ? (subTops[0] ?? volumeTop) : volumeTop
+  const mainHeight = Math.max(260, firstBelowMainTop - gap - topMain)
 
   const grids: any[] = []
   grids.push({ left: 84, right: 24, top: topMain, height: mainHeight })
-
-  const subTops: number[] = []
-  let curTop = topMain + mainHeight + gap
   for (let i = 0; i < subCount; i++) {
-    grids.push({ left: 84, right: 24, top: curTop, height: subPaneHeight })
-    subTops.push(curTop)
-    curTop += subPaneHeight + gap
+    grids.push({ left: 84, right: 24, top: subTops[i], height: subPaneHeight })
   }
-  const volumeTop = curTop
   grids.push({ left: 84, right: 24, top: volumeTop, height: volumeHeight })
 
   const xAxes: any[] = []
@@ -383,7 +393,9 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
         xAxisIndex: Array.from({ length: xAxes.length }, (_, i) => i),
         start: zoomStart.value,
         end: zoomEnd.value,
-        top: volumeTop + volumeHeight + 8,
+        bottom: sliderBottom,
+        left: 84,
+        right: 24,
         height: 20,
         show: showSlider,
       },

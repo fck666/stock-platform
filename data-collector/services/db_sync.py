@@ -16,6 +16,7 @@ from collectors.yahoo_finance import (
     fetch_yahoo_corporate_actions,
     fetch_yahoo_fundamentals,
 )
+from collectors.sec_facts import fetch_sec_shares_outstanding
 from collectors.wiki_info import fetch_company_wiki_summaries
 from db.connection import DbConfig, get_connection
 from db.stock_repo import StockRepository
@@ -219,48 +220,86 @@ def sync_index_fundamentals_to_db(
             constituents = repo.list_latest_index_constituents(index_symbol=index_symbol, symbols=symbols, limit=limit)
 
         today = datetime.utcnow().date()
+        recent_cutoff = today - timedelta(days=370)
         for c in constituents:
             securities_scanned += 1
             yahoo_symbol = canonical_to_yahoo_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
             repo.upsert_security_identifier(security_id=c.security_id, provider="yahoo", identifier=yahoo_symbol)
 
             try:
-                fund = fetch_yahoo_fundamentals(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
-                repo.upsert_fundamental_snapshot(
-                    security_id=c.security_id,
-                    as_of_date=today,
-                    shares_outstanding=fund.shares_outstanding,
-                    float_shares=fund.float_shares,
-                    market_cap=fund.market_cap,
-                    currency=fund.currency,
-                    source="yahoo",
-                )
-                snapshots_upserted += 1
+                if not repo.has_any_fundamental_snapshot(security_id=c.security_id, as_of_date=today):
+                    try:
+                        fund = fetch_yahoo_fundamentals(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
+                        repo.upsert_fundamental_snapshot(
+                            security_id=c.security_id,
+                            as_of_date=today,
+                            shares_outstanding=fund.shares_outstanding,
+                            float_shares=fund.float_shares,
+                            market_cap=fund.market_cap,
+                            currency=fund.currency,
+                            source="yahoo",
+                        )
+                        snapshots_upserted += 1
+                    except Exception as e:
+                        log.warning("Failed fetching yahoo fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
+                        if index_symbol == "^SPX":
+                            cik = repo.get_security_cik(security_id=c.security_id)
+                            if cik:
+                                sec = fetch_sec_shares_outstanding(http, cik, timeout=http_timeout_seconds, user_agent=user_agent)
+                                last_close = repo.get_latest_close(security_id=c.security_id, interval="1d")
+                                market_cap = None
+                                if last_close is not None:
+                                    market_cap = float(sec.shares_outstanding) * float(last_close[1])
+                                currency = repo.get_security_currency(security_id=c.security_id) or "USD"
+                                repo.upsert_fundamental_snapshot(
+                                    security_id=c.security_id,
+                                    as_of_date=today,
+                                    shares_outstanding=sec.shares_outstanding,
+                                    float_shares=None,
+                                    market_cap=market_cap,
+                                    currency=currency,
+                                    source="sec",
+                                )
+                                snapshots_upserted += 1
+                else:
+                    log.info("Skip fundamentals (already snapped today) for %s (%s)", c.canonical_symbol, yahoo_symbol)
             except Exception as e:
-                log.warning("Failed fetching fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
+                log.warning("Failed syncing fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
 
             try:
-                actions = fetch_yahoo_corporate_actions(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
-                for a in actions:
-                    repo.upsert_corporate_action(
-                        security_id=c.security_id,
-                        ex_date=a.ex_date,
-                        action_type=a.action_type,
-                        cash_amount=a.cash_amount,
-                        currency=a.currency,
-                        split_numerator=a.split_numerator,
-                        split_denominator=a.split_denominator,
-                        source="yahoo",
-                        raw_payload=a.raw_payload,
+                existing_count = repo.count_corporate_actions(security_id=c.security_id, source="yahoo")
+                max_ex_date = repo.get_latest_corporate_action_ex_date(security_id=c.security_id, source="yahoo") if existing_count > 0 else None
+                if existing_count > 0 and max_ex_date is not None and max_ex_date >= recent_cutoff:
+                    log.info("Skip corporate actions (recent enough: %s) for %s (%s)", max_ex_date, c.canonical_symbol, yahoo_symbol)
+                else:
+                    range_ = "max" if existing_count == 0 else "2y"
+                    actions = fetch_yahoo_corporate_actions(
+                        http,
+                        yahoo_symbol,
+                        timeout=http_timeout_seconds,
+                        user_agent=user_agent,
+                        range_=range_,
                     )
-                    actions_upserted += 1
+                    for a in actions:
+                        repo.upsert_corporate_action(
+                            security_id=c.security_id,
+                            ex_date=a.ex_date,
+                            action_type=a.action_type,
+                            cash_amount=a.cash_amount,
+                            currency=a.currency,
+                            split_numerator=a.split_numerator,
+                            split_denominator=a.split_denominator,
+                            source="yahoo",
+                            raw_payload=a.raw_payload,
+                        )
+                        actions_upserted += 1
             except Exception as e:
                 log.warning("Failed fetching corporate actions for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
             try:
                 import random
                 import time
 
-                time.sleep(0.8 + random.random() * 0.8)
+                time.sleep(2.0 + random.random() * 1.2)
             except Exception:
                 pass
 

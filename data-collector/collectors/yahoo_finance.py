@@ -9,6 +9,8 @@ import requests
 log = logging.getLogger(__name__)
 
 _WARMED_UP = False
+_CRUMB: str | None = None
+_CRUMB_AT: float | None = None
 
 
 def _sleep_with_jitter(base_seconds: float) -> None:
@@ -26,9 +28,39 @@ def warmup_yahoo_session(session: requests.Session, *, timeout: float, user_agen
     }
     try:
         session.get("https://finance.yahoo.com/", headers=headers, timeout=timeout)
+        _refresh_crumb(session, timeout=timeout, user_agent=user_agent)
         _WARMED_UP = True
     except Exception:
         return
+
+
+def _refresh_crumb(session: requests.Session, *, timeout: float, user_agent: str) -> None:
+    global _CRUMB, _CRUMB_AT
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Referer": "https://finance.yahoo.com/",
+    }
+    try:
+        resp = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", headers=headers, timeout=timeout)
+        if resp.status_code == 200:
+            crumb = (resp.text or "").strip()
+            if crumb and len(crumb) < 64 and "\n" not in crumb:
+                _CRUMB = crumb
+                _CRUMB_AT = time.time()
+    except Exception:
+        return
+
+
+def _maybe_add_crumb(url: str) -> str:
+    if _CRUMB is None:
+        return url
+    if "crumb=" in url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}crumb={_CRUMB}"
+
 
 def _request_json(
     session: requests.Session,
@@ -48,9 +80,11 @@ def _request_json(
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            resp = session.get(url, headers=headers, timeout=timeout)
+            effective_url = _maybe_add_crumb(url) if "quoteSummary" in url else url
+            resp = session.get(effective_url, headers=headers, timeout=timeout)
             if resp.status_code == 401:
                 warmup_yahoo_session(session, timeout=timeout, user_agent=user_agent)
+                _refresh_crumb(session, timeout=timeout, user_agent=user_agent)
                 raise RuntimeError(f"HTTP 401 for {url}")
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
@@ -100,17 +134,12 @@ def fetch_yahoo_fundamentals(
     timeout: float,
     user_agent: str,
 ) -> YahooFundamentals:
-    url = (
+    warmup_yahoo_session(session, timeout=timeout, user_agent=user_agent)
+
+    quote_summary_url = (
         f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{yahoo_symbol}"
         "?modules=price,defaultKeyStatistics"
     )
-    payload = _request_json(session, url, timeout=timeout, user_agent=user_agent)
-    result = (payload.get("quoteSummary") or {}).get("result") or []
-    if not result:
-        raise RuntimeError(f"No quoteSummary result for {yahoo_symbol}")
-    r0 = result[0]
-    price = r0.get("price") or {}
-    stats = r0.get("defaultKeyStatistics") or {}
 
     def _raw_int(x) -> int | None:
         if isinstance(x, dict) and "raw" in x:
@@ -118,12 +147,45 @@ def fetch_yahoo_fundamentals(
                 return int(x["raw"])
             except Exception:
                 return None
+        if isinstance(x, (int, float)):
+            try:
+                return int(x)
+            except Exception:
+                return None
         return None
 
-    market_cap = _raw_int(price.get("marketCap"))
-    currency = price.get("currency")
-    shares_outstanding = _raw_int(stats.get("sharesOutstanding"))
-    float_shares = _raw_int(stats.get("floatShares"))
+    try:
+        payload = _request_json(session, quote_summary_url, timeout=timeout, user_agent=user_agent)
+        result = (payload.get("quoteSummary") or {}).get("result") or []
+        if not result:
+            raise RuntimeError(f"No quoteSummary result for {yahoo_symbol}")
+        r0 = result[0]
+        price = r0.get("price") or {}
+        stats = r0.get("defaultKeyStatistics") or {}
+        market_cap = _raw_int(price.get("marketCap"))
+        currency = price.get("currency")
+        shares_outstanding = _raw_int(stats.get("sharesOutstanding"))
+        float_shares = _raw_int(stats.get("floatShares"))
+        return YahooFundamentals(
+            market_cap=market_cap,
+            shares_outstanding=shares_outstanding,
+            float_shares=float_shares,
+            currency=currency,
+            raw_payload=payload,
+        )
+    except Exception as e:
+        log.warning("quoteSummary failed for %s: %s", yahoo_symbol, e)
+
+    quote_url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={yahoo_symbol}"
+    payload = _request_json(session, quote_url, timeout=timeout, user_agent=user_agent)
+    result = (payload.get("quoteResponse") or {}).get("result") or []
+    if not result:
+        raise RuntimeError(f"No quote result for {yahoo_symbol}")
+    r0 = result[0]
+    market_cap = _raw_int(r0.get("marketCap"))
+    shares_outstanding = _raw_int(r0.get("sharesOutstanding"))
+    float_shares = _raw_int(r0.get("floatShares"))
+    currency = r0.get("currency")
     return YahooFundamentals(
         market_cap=market_cap,
         shares_outstanding=shares_outstanding,
@@ -150,10 +212,11 @@ def fetch_yahoo_corporate_actions(
     *,
     timeout: float,
     user_agent: str,
+    range_: str = "max",
 ) -> list[YahooCorporateAction]:
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
-        "?range=max&interval=1d&events=div%2Csplits"
+        f"?range={range_}&interval=1d&events=div%2Csplits"
     )
     payload = _request_json(session, url, timeout=timeout, user_agent=user_agent)
     chart = payload.get("chart") or {}
