@@ -11,7 +11,7 @@ const props = defineProps<{
   windowEnd?: number
   showSlider?: boolean
   maLines?: Record<string, Array<number | null>>
-  subIndicator?: 'none' | 'macd' | 'kdj'
+  subIndicators?: Array<'macd' | 'kdj'>
   macd?: { dif: Array<number | null>; dea: Array<number | null>; hist: Array<number | null> } | null
   kdj?: { k: Array<number | null>; d: Array<number | null>; j: Array<number | null> } | null
 }>()
@@ -155,51 +155,39 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
   })
 
   const showSlider = props.showSlider !== false
-  const sub = props.subIndicator ?? 'none'
-  const hasSub = sub !== 'none'
-  const grids: any[] = hasSub
-    ? [
-        { left: 84, right: 24, top: 40, height: '50%' },
-        { left: 84, right: 24, top: '67%', height: '10%' },
-        { left: 84, right: 24, top: '79%', height: '10%' },
-      ]
-    : [
-        { left: 84, right: 24, top: 40, height: '58%' },
-        { left: 84, right: 24, top: '70%', height: '14%' },
-      ]
-  const xAxes: any[] = [
-    {
+  const subs = (props.subIndicators || []).filter((x) => x === 'macd' || x === 'kdj')
+  const subCount = subs.length
+  const totalHeight = props.height ?? 520
+  const topMain = 40
+  const gap = 12
+  const subPaneHeight = 130
+  const volumeHeight = 110
+  const sliderArea = showSlider ? 44 : 16
+  const reserved = subCount * (subPaneHeight + gap) + (volumeHeight + gap) + sliderArea
+  const mainHeight = Math.max(260, totalHeight - topMain - reserved)
+
+  const grids: any[] = []
+  grids.push({ left: 84, right: 24, top: topMain, height: mainHeight })
+
+  const subTops: number[] = []
+  let curTop = topMain + mainHeight + gap
+  for (let i = 0; i < subCount; i++) {
+    grids.push({ left: 84, right: 24, top: curTop, height: subPaneHeight })
+    subTops.push(curTop)
+    curTop += subPaneHeight + gap
+  }
+  const volumeTop = curTop
+  grids.push({ left: 84, right: 24, top: volumeTop, height: volumeHeight })
+
+  const xAxes: any[] = []
+  for (let i = 0; i < grids.length; i++) {
+    xAxes.push({
       type: 'category',
+      gridIndex: i,
       data: categories,
       boundaryGap: true,
       axisLine: { lineStyle: { color: '#cfd5e2' } },
-      axisLabel: { color: '#667085' },
-      axisTick: { show: false },
-      splitLine: { show: false },
-      min: 'dataMin',
-      max: 'dataMax',
-    },
-    {
-      type: 'category',
-      gridIndex: hasSub ? 2 : 1,
-      data: categories,
-      boundaryGap: true,
-      axisLine: { lineStyle: { color: '#cfd5e2' } },
-      axisLabel: { show: false },
-      axisTick: { show: false },
-      splitLine: { show: false },
-      min: 'dataMin',
-      max: 'dataMax',
-    },
-  ]
-  if (hasSub) {
-    xAxes.splice(1, 0, {
-      type: 'category',
-      gridIndex: 1,
-      data: categories,
-      boundaryGap: true,
-      axisLine: { lineStyle: { color: '#cfd5e2' } },
-      axisLabel: { show: false },
+      axisLabel: i === grids.length - 1 ? { color: '#667085' } : { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
       min: 'dataMin',
@@ -207,36 +195,17 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     })
   }
 
-  const yAxes: any[] = [
-    {
-      scale: true,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: { color: '#667085', margin: 12 },
-      splitLine: { lineStyle: { color: '#eef1f6' } },
-    },
-    {
-      gridIndex: hasSub ? 2 : 1,
-      scale: true,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: {
-        color: '#667085',
-        margin: 12,
-        formatter: (v: number) => {
-          const abs = Math.abs(v)
-          if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`
-          if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
-          if (abs >= 1_000) return `${(v / 1_000).toFixed(2)}K`
-          return String(v)
-        },
-      },
-      splitLine: { lineStyle: { color: '#eef1f6' } },
-    },
-  ]
-  if (hasSub) {
-    yAxes.splice(1, 0, {
-      gridIndex: 1,
+  const yAxes: any[] = []
+  yAxes.push({
+    scale: true,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { color: '#667085', margin: 12 },
+    splitLine: { lineStyle: { color: '#eef1f6' } },
+  })
+  for (let i = 0; i < subCount; i++) {
+    yAxes.push({
+      gridIndex: 1 + i,
       scale: true,
       axisLine: { show: false },
       axisTick: { show: false },
@@ -244,6 +213,24 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       splitLine: { lineStyle: { color: '#eef1f6' } },
     })
   }
+  yAxes.push({
+    gridIndex: grids.length - 1,
+    scale: true,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: {
+      color: '#667085',
+      margin: 12,
+      formatter: (v: number) => {
+        const abs = Math.abs(v)
+        if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`
+        if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+        if (abs >= 1_000) return `${(v / 1_000).toFixed(2)}K`
+        return String(v)
+      },
+    },
+    splitLine: { lineStyle: { color: '#eef1f6' } },
+  })
 
   const series: any[] = [
     {
@@ -278,86 +265,90 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     })
   }
 
-  if (hasSub && sub === 'macd' && props.macd) {
-    const macd = props.macd
-    series.push(
-      {
-        name: 'DIF',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: macd.dif,
-        showSymbol: false,
-        smooth: true,
-        lineStyle: { width: 1, color: '#5b8ff9' },
-      },
-      {
-        name: 'DEA',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: macd.dea,
-        showSymbol: false,
-        smooth: true,
-        lineStyle: { width: 1, color: '#f6bd16' },
-      },
-      {
-        name: 'HIST',
-        type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: macd.hist.map((v) => {
-          if (v === null || v === undefined) return null
-          return {
-            value: v,
-            itemStyle: { color: v >= 0 ? '#26a69a' : '#ef5350' },
-          }
-        }),
-        barWidth: '60%',
-      },
-    )
-  }
-  if (hasSub && sub === 'kdj' && props.kdj) {
-    const kdj = props.kdj
-    series.push(
-      {
-        name: 'K',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: kdj.k,
-        showSymbol: false,
-        smooth: true,
-        lineStyle: { width: 1, color: '#5b8ff9' },
-      },
-      {
-        name: 'D',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: kdj.d,
-        showSymbol: false,
-        smooth: true,
-        lineStyle: { width: 1, color: '#f6bd16' },
-      },
-      {
-        name: 'J',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: kdj.j,
-        showSymbol: false,
-        smooth: true,
-        lineStyle: { width: 1, color: '#7262fd' },
-      },
-    )
+  for (let i = 0; i < subs.length; i++) {
+    const idx = 1 + i
+    const sub = subs[i]
+    if (sub === 'macd' && props.macd) {
+      const macd = props.macd
+      series.push(
+        {
+          name: `DIF${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'line',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: macd.dif,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { width: 1, color: '#5b8ff9' },
+        },
+        {
+          name: `DEA${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'line',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: macd.dea,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { width: 1, color: '#f6bd16' },
+        },
+        {
+          name: `HIST${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'bar',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: macd.hist.map((v) => {
+            if (v === null || v === undefined) return null
+            return {
+              value: v,
+              itemStyle: { color: v >= 0 ? '#26a69a' : '#ef5350' },
+            }
+          }),
+          barWidth: '60%',
+        },
+      )
+    }
+    if (sub === 'kdj' && props.kdj) {
+      const kdj = props.kdj
+      series.push(
+        {
+          name: `K${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'line',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: kdj.k,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { width: 1, color: '#5b8ff9' },
+        },
+        {
+          name: `D${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'line',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: kdj.d,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { width: 1, color: '#f6bd16' },
+        },
+        {
+          name: `J${subCount > 1 ? `#${i + 1}` : ''}`,
+          type: 'line',
+          xAxisIndex: idx,
+          yAxisIndex: idx,
+          data: kdj.j,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { width: 1, color: '#7262fd' },
+        },
+      )
+    }
   }
 
   series.push({
     name: 'Volume',
     type: 'bar',
-    xAxisIndex: hasSub ? 2 : 1,
-    yAxisIndex: hasSub ? 2 : 1,
+    xAxisIndex: grids.length - 1,
+    yAxisIndex: yAxes.length - 1,
     data: volumes,
     barWidth: '60%',
   })
@@ -380,7 +371,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     dataZoom: [
       {
         type: 'inside',
-        xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+        xAxisIndex: Array.from({ length: xAxes.length }, (_, i) => i),
         start: zoomStart.value,
         end: zoomEnd.value,
         zoomOnMouseWheel: false,
@@ -389,10 +380,10 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       },
       {
         type: 'slider',
-        xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+        xAxisIndex: Array.from({ length: xAxes.length }, (_, i) => i),
         start: zoomStart.value,
         end: zoomEnd.value,
-        top: hasSub ? '90%' : '88%',
+        top: volumeTop + volumeHeight + 8,
         height: 20,
         show: showSlider,
       },
@@ -447,7 +438,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.bars, props.maLines, props.subIndicator, props.macd, props.kdj],
+  () => [props.bars, props.maLines, props.subIndicators, props.macd, props.kdj],
   () => render(),
   { deep: true },
 )

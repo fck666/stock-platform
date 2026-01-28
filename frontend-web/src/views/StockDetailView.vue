@@ -30,7 +30,7 @@ const start = ref<string>('')
 const end = ref<string>('')
 const chartHeight = ref(600)
 const selectedMas = ref<number[]>([])
-const subIndicator = ref<'none' | 'macd' | 'kdj'>('none')
+const selectedSubIndicators = ref<Array<'macd' | 'kdj'>>([])
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(Math.max(n, min), max)
@@ -71,7 +71,9 @@ function setAll() {
 }
 
 function updateChartHeight() {
-  chartHeight.value = clamp(Math.floor(window.innerHeight - 360), 520, 900)
+  const base = clamp(Math.floor(window.innerHeight - 420), 520, 900)
+  const extra = selectedSubIndicators.value.length * 180
+  chartHeight.value = clamp(base + extra, 520, 1600)
 }
 
 function hasValue(val: any) {
@@ -103,7 +105,7 @@ async function loadAll() {
 }
 
 function hasIndicatorsEnabled() {
-  return selectedMas.value.length > 0 || subIndicator.value !== 'none'
+  return selectedMas.value.length > 0 || selectedSubIndicators.value.length > 0
 }
 
 async function loadIndicators() {
@@ -123,7 +125,7 @@ async function loadIndicators() {
       start: start.value || undefined,
       end: end.value || undefined,
       ma: selectedMas.value.join(',') || undefined,
-      include: subIndicator.value !== 'none' ? subIndicator.value : undefined,
+      include: selectedSubIndicators.value.join(',') || undefined,
     })
   } catch (e: any) {
     indicators.value = null
@@ -140,8 +142,10 @@ function loadIndicatorConfig() {
     const parsed = JSON.parse(raw)
     const mas = Array.isArray(parsed?.mas) ? parsed.mas : []
     selectedMas.value = mas.map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x))
-    const sub = String(parsed?.sub || 'none') as any
-    subIndicator.value = sub === 'macd' || sub === 'kdj' ? sub : 'none'
+    const subs = Array.isArray(parsed?.subs) ? parsed.subs : []
+    selectedSubIndicators.value = subs
+      .map((x: any) => String(x))
+      .filter((x: any) => x === 'macd' || x === 'kdj')
   } catch {}
 }
 
@@ -149,15 +153,16 @@ function saveIndicatorConfig() {
   try {
     localStorage.setItem(
       'stock_platform_indicator_config',
-      JSON.stringify({ mas: selectedMas.value, sub: subIndicator.value }),
+      JSON.stringify({ mas: selectedMas.value, subs: selectedSubIndicators.value }),
     )
   } catch {}
 }
 
 watch(
-  () => [selectedMas.value, subIndicator.value],
+  () => [selectedMas.value, selectedSubIndicators.value],
   () => {
     saveIndicatorConfig()
+    updateChartHeight()
     loadIndicators()
   },
   { deep: true },
@@ -189,7 +194,7 @@ const maLines = computed(() => {
 })
 
 const macdSeries = computed(() => {
-  if (subIndicator.value !== 'macd') return null
+  if (!selectedSubIndicators.value.includes('macd')) return null
   return {
     dif: bars.value.map((b) => {
       const v = indicatorByDate.value.get(b.date)?.macd?.dif
@@ -207,7 +212,7 @@ const macdSeries = computed(() => {
 })
 
 const kdjSeries = computed(() => {
-  if (subIndicator.value !== 'kdj') return null
+  if (!selectedSubIndicators.value.includes('kdj')) return null
   return {
     k: bars.value.map((b) => {
       const v = indicatorByDate.value.get(b.date)?.kdj?.k
@@ -296,11 +301,10 @@ watch(interval, () => loadAll())
                 <el-checkbox :label="180">MA180</el-checkbox>
                 <el-checkbox :label="360">MA360</el-checkbox>
               </el-checkbox-group>
-              <el-select v-model="subIndicator" size="small" style="width: 120px">
-                <el-option label="无副图" value="none" />
-                <el-option label="MACD" value="macd" />
-                <el-option label="KDJ" value="kdj" />
-              </el-select>
+              <el-checkbox-group v-model="selectedSubIndicators">
+                <el-checkbox label="macd">MACD</el-checkbox>
+                <el-checkbox label="kdj">KDJ</el-checkbox>
+              </el-checkbox-group>
             </el-space>
           </div>
         </el-card>
@@ -312,7 +316,7 @@ watch(interval, () => loadAll())
               :title="title"
               :height="chartHeight"
               :ma-lines="maLines"
-              :sub-indicator="subIndicator"
+              :sub-indicators="selectedSubIndicators"
               :macd="macdSeries"
               :kdj="kdjSeries"
             />

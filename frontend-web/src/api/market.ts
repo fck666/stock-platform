@@ -102,11 +102,27 @@ export async function getIndexBars(symbol: string, interval: string = '1d', star
   return res.data
 }
 
+export async function getIndexIndicators(
+  symbol: string,
+  params?: { start?: string; end?: string; interval?: string; ma?: string; include?: string }
+) {
+  const clean = symbol.startsWith('^') ? symbol.substring(1).toLowerCase() : symbol.toLowerCase()
+  const res = await http.get<IndicatorsResponseDto>(`/api/index/${encodeURIComponent(clean)}/indicators`, { params })
+  return res.data
+}
+
 export async function getSp500Bars(params?: { start?: string; end?: string; interval?: string }) {
   return getIndexBars('^SPX', params?.interval || '1d', params?.start, params?.end)
 }
 
-export async function listStocks(params: { index?: string; query?: string; page: number; size: number }) {
+export async function listStocks(params: {
+  index?: string
+  query?: string
+  page: number
+  size: number
+  sortBy?: 'symbol' | 'name'
+  sortDir?: 'asc' | 'desc'
+}) {
   const res = await http.get<PagedResponse<StockListItemDto>>('/api/stocks', { params })
   return res.data
 }

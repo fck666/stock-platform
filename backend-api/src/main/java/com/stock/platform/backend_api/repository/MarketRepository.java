@@ -47,20 +47,28 @@ public class MarketRepository {
             String query,
             int page,
             int size,
+            String sortBy,
+            String sortDir,
             String lang
     ) {
-        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol)
-                .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            asOf = getLatestIndexAsOfDate(indexSymbol)
+                    .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
+        }
 
         String q = query == null ? null : query.trim();
         boolean hasQuery = q != null && !q.isBlank();
 
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("indexSymbol", indexSymbol)
-                .addValue("asOf", asOf)
                 .addValue("lang", lang)
                 .addValue("limit", size)
                 .addValue("offset", Math.max(0, page) * size);
+        if (!listAll) {
+            params.addValue("indexSymbol", indexSymbol);
+            params.addValue("asOf", asOf);
+        }
 
         if (hasQuery) {
             params.addValue("qLike", "%" + q + "%");
@@ -70,49 +78,108 @@ public class MarketRepository {
                 ? "and (s.canonical_symbol ilike :qLike or s.name ilike :qLike or ws.title ilike :qLike or ws.description ilike :qLike)"
                 : "";
 
-        long total = jdbc.queryForObject(
-                """
-                select count(*) as cnt
-                from market.security s
-                join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
-                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
-                left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
-                where s.security_type = 'STOCK'
-                %s
-                """.formatted(where),
-                params,
-                Long.class
-        );
+        String orderCol = "s.canonical_symbol";
+        String sortKey = sortBy == null ? "" : sortBy.trim().toLowerCase(Locale.ROOT);
+        if (sortKey.equals("name")) {
+            orderCol = "coalesce(s.name, '')";
+        } else if (sortKey.equals("symbol")) {
+            orderCol = "s.canonical_symbol";
+        }
+        String dir = sortDir == null ? "" : sortDir.trim().toLowerCase(Locale.ROOT);
+        String orderDir = dir.equals("desc") ? "desc" : "asc";
+        String orderBy = orderCol.equals("s.canonical_symbol")
+                ? "order by s.canonical_symbol " + orderDir
+                : "order by " + orderCol + " " + orderDir + ", s.canonical_symbol asc";
 
-        List<StockListItemDto> items = jdbc.query(
-                """
-                select
-                    s.canonical_symbol as symbol,
-                    s.name as name,
-                    sd.sector,
-                    sd.sub_industry,
-                    sd.headquarters,
-                    ws.description as wiki_description
-                from market.security s
-                join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
-                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
-                left join market.security_detail sd on sd.security_id = s.id
-                left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
-                where s.security_type = 'STOCK'
-                %s
-                order by s.canonical_symbol
-                limit :limit offset :offset
-                """.formatted(where),
-                params,
-                (rs, rowNum) -> new StockListItemDto(
-                        rs.getString("symbol"),
-                        rs.getString("name"),
-                        rs.getString("sector"),
-                        rs.getString("sub_industry"),
-                        rs.getString("headquarters"),
-                        rs.getString("wiki_description")
-                )
-        );
+        long total;
+        if (listAll) {
+            total = jdbc.queryForObject(
+                    """
+                    select count(*) as cnt
+                    from market.security s
+                    left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
+                    where s.security_type = 'STOCK'
+                    %s
+                    """.formatted(where),
+                    params,
+                    Long.class
+            );
+        } else {
+            total = jdbc.queryForObject(
+                    """
+                    select count(*) as cnt
+                    from market.security s
+                    join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                    join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
+                    left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
+                    where s.security_type = 'STOCK'
+                    %s
+                    """.formatted(where),
+                    params,
+                    Long.class
+            );
+        }
+
+        List<StockListItemDto> items;
+        if (listAll) {
+            items = jdbc.query(
+                    """
+                    select
+                        s.canonical_symbol as symbol,
+                        s.name as name,
+                        sd.sector,
+                        sd.sub_industry,
+                        sd.headquarters,
+                        ws.description as wiki_description
+                    from market.security s
+                    left join market.security_detail sd on sd.security_id = s.id
+                    left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
+                    where s.security_type = 'STOCK'
+                    %s
+                    %s
+                    limit :limit offset :offset
+                    """.formatted(where, orderBy),
+                    params,
+                    (rs, rowNum) -> new StockListItemDto(
+                            rs.getString("symbol"),
+                            rs.getString("name"),
+                            rs.getString("sector"),
+                            rs.getString("sub_industry"),
+                            rs.getString("headquarters"),
+                            rs.getString("wiki_description")
+                    )
+            );
+        } else {
+            items = jdbc.query(
+                    """
+                    select
+                        s.canonical_symbol as symbol,
+                        s.name as name,
+                        sd.sector,
+                        sd.sub_industry,
+                        sd.headquarters,
+                        ws.description as wiki_description
+                    from market.security s
+                    join market.index_membership m on m.security_id = s.id and m.as_of_date = :asOf
+                    join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol
+                    left join market.security_detail sd on sd.security_id = s.id
+                    left join market.wiki_summary ws on ws.security_id = s.id and ws.lang = :lang
+                    where s.security_type = 'STOCK'
+                    %s
+                    %s
+                    limit :limit offset :offset
+                    """.formatted(where, orderBy),
+                    params,
+                    (rs, rowNum) -> new StockListItemDto(
+                            rs.getString("symbol"),
+                            rs.getString("name"),
+                            rs.getString("sector"),
+                            rs.getString("sub_industry"),
+                            rs.getString("headquarters"),
+                            rs.getString("wiki_description")
+                    )
+            );
+        }
 
         return new PagedResponse<>(items, total, page, size);
     }
@@ -123,7 +190,7 @@ public class MarketRepository {
             int size,
             String lang
     ) {
-        return listIndexStocks("^SPX", query, page, size, lang);
+        return listIndexStocks("^SPX", query, page, size, null, null, lang);
     }
 
     public Optional<Long> findSecurityIdBySymbol(String canonicalSymbol) {

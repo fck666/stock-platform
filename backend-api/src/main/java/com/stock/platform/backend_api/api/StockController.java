@@ -35,11 +35,14 @@ public class StockController {
             @RequestParam(required = false) String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDir,
             @RequestParam(defaultValue = "en") String lang
     ) {
         int safeSize = Math.min(Math.max(size, 1), 200);
         int safePage = Math.max(page, 0);
-        return marketRepository.listIndexStocks(index.toUpperCase(), query, safePage, safeSize, lang);
+        String idx = index == null ? "^SPX" : index.trim().toUpperCase();
+        return marketRepository.listIndexStocks(idx, query, safePage, safeSize, sortBy, sortDir, lang);
     }
 
     @GetMapping("/{symbol}")
