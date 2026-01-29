@@ -2,6 +2,8 @@ package com.stock.platform.backend_api.service;
 
 import com.stock.platform.backend_api.api.dto.SyncJobDto;
 import com.stock.platform.backend_api.config.AppProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +25,7 @@ import java.util.concurrent.Executors;
 
 @Service
 public class DataCollectorService {
+    private static final Logger log = LoggerFactory.getLogger(DataCollectorService.class);
     private static final int OUTPUT_TAIL_LIMIT = 4000;
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
 
@@ -136,6 +139,7 @@ public class DataCollectorService {
     private void runJob(Job job, List<String> scriptArgs) {
         job.status = "RUNNING";
         job.startedAt = Instant.now();
+        log.info("Starting sync job {}: {}", job.jobId, String.join(" ", scriptArgs));
 
         try {
             AppProperties.DataCollector dc = appProperties.dataCollector();
@@ -162,13 +166,16 @@ public class DataCollectorService {
                 String line;
                 while ((line = br.readLine()) != null) {
                     job.appendOutput(line + "\n");
+                    log.info("[Job {}] {}", job.jobId, line);
                 }
             }
 
             int exit = p.waitFor();
             job.exitCode = exit;
             job.status = exit == 0 ? "SUCCEEDED" : "FAILED";
+            log.info("Job {} finished with status: {}, exit code: {}", job.jobId, job.status, exit);
         } catch (Exception e) {
+            log.error("Job {} failed with error: {}", job.jobId, e.getMessage(), e);
             job.appendOutput("ERROR: " + e.getMessage() + "\n");
             job.status = "FAILED";
         } finally {

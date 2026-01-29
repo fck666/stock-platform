@@ -13,6 +13,7 @@ import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -46,8 +47,10 @@ public class MarketRepository {
         boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
         LocalDate asOf = null;
         if (!listAll) {
-            asOf = getLatestIndexAsOfDate(indexSymbol)
-                    .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return List.of();
+            }
         }
 
         MapSqlParameterSource params = new MapSqlParameterSource();
@@ -109,8 +112,10 @@ public class MarketRepository {
         boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
         LocalDate asOf = null;
         if (!listAll) {
-            asOf = getLatestIndexAsOfDate(indexSymbol)
-                    .orElseThrow(() -> new IllegalStateException("Index list not loaded: " + indexSymbol));
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return new PagedResponse<>(List.of(), 0, page, size);
+            }
         }
 
         String q = query == null ? null : query.trim();
@@ -256,6 +261,209 @@ public class MarketRepository {
                 (rs, rowNum) -> rs.getLong("id")
         );
         return ids.isEmpty() ? Optional.empty() : Optional.of(ids.get(0));
+    }
+
+    public List<IndexListItemDto> listIndices() {
+        return jdbc.query(
+                """
+                select s.canonical_symbol as symbol, s.name as name, sd.wiki_url as wiki_url
+                from market.security s
+                left join market.security_detail sd on sd.security_id = s.id
+                where s.security_type = 'INDEX'
+                order by s.canonical_symbol asc
+                """,
+                new MapSqlParameterSource(),
+                (rs, rowNum) -> new IndexListItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("wiki_url")
+                )
+        );
+    }
+
+    public long createSecurity(String securityType, String canonicalSymbol, String name, String wikiUrl, String stooqSymbol) {
+        MapSqlParameterSource checkParams = new MapSqlParameterSource().addValue("symbol", canonicalSymbol);
+        List<String> existingTypes = jdbc.query(
+                "select security_type from market.security where canonical_symbol = :symbol",
+                checkParams,
+                (rs, rowNum) -> rs.getString("security_type")
+        );
+        if (!existingTypes.isEmpty()) {
+            throw new IllegalStateException("Symbol already exists: " + canonicalSymbol);
+        }
+
+        Long id = jdbc.queryForObject(
+                """
+                insert into market.security (security_type, canonical_symbol, name)
+                values (:type, :symbol, :name)
+                returning id
+                """,
+                new MapSqlParameterSource()
+                        .addValue("type", securityType)
+                        .addValue("symbol", canonicalSymbol)
+                        .addValue("name", name),
+                Long.class
+        );
+        if (id == null) {
+            throw new IllegalStateException("Failed to create security: " + canonicalSymbol);
+        }
+
+        if (wikiUrl != null || stooqSymbol != null) {
+            jdbc.update(
+                    """
+                    insert into market.security_detail (security_id, wiki_url, stooq_symbol)
+                    values (:id, :wikiUrl, :stooqSymbol)
+                    on conflict (security_id) do update set
+                        wiki_url = coalesce(excluded.wiki_url, market.security_detail.wiki_url),
+                        stooq_symbol = coalesce(excluded.stooq_symbol, market.security_detail.stooq_symbol),
+                        updated_at = now()
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("id", id)
+                            .addValue("wikiUrl", wikiUrl)
+                            .addValue("stooqSymbol", stooqSymbol)
+            );
+        }
+
+        if (stooqSymbol != null) {
+            MapSqlParameterSource idParams = new MapSqlParameterSource()
+                    .addValue("provider", "stooq")
+                    .addValue("identifier", stooqSymbol);
+            List<Long> existing = jdbc.query(
+                    "select security_id from market.security_identifier where provider = :provider and identifier = :identifier",
+                    idParams,
+                    (rs, rowNum) -> rs.getLong("security_id")
+            );
+            if (!existing.isEmpty() && existing.get(0) != id) {
+                throw new IllegalStateException("Identifier already exists: stooq=" + stooqSymbol);
+            }
+            if (existing.isEmpty()) {
+                jdbc.update(
+                        """
+                        insert into market.security_identifier (security_id, provider, identifier, is_primary)
+                        values (:id, :provider, :identifier, true)
+                        """,
+                        idParams.addValue("id", id)
+                );
+            }
+        }
+
+        return id;
+    }
+
+    public long requireIndexId(String indexSymbol) {
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("symbol", indexSymbol);
+        List<Long> ids = jdbc.query(
+                "select id from market.security where security_type = 'INDEX' and canonical_symbol = :symbol",
+                params,
+                (rs, rowNum) -> rs.getLong("id")
+        );
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("Index not found: " + indexSymbol);
+        }
+        return ids.get(0);
+    }
+
+    public Map<String, Long> resolveStockIds(List<String> canonicalSymbols) {
+        if (canonicalSymbols == null || canonicalSymbols.isEmpty()) {
+            return Map.of();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("symbols", canonicalSymbols);
+        List<Map.Entry<String, Long>> rows = jdbc.query(
+                """
+                select canonical_symbol, id
+                from market.security
+                where security_type = 'STOCK' and canonical_symbol in (:symbols)
+                """,
+                params,
+                (rs, rowNum) -> Map.entry(rs.getString("canonical_symbol"), rs.getLong("id"))
+        );
+        Map<String, Long> out = new HashMap<>();
+        for (Map.Entry<String, Long> e : rows) {
+            out.put(e.getKey(), e.getValue());
+        }
+        return out;
+    }
+
+    public List<String> listIndexConstituentSymbols(String indexSymbol) {
+        requireIndexId(indexSymbol);
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+        if (asOf == null) {
+            return List.of();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("symbol", indexSymbol)
+                .addValue("asOf", asOf);
+        return jdbc.query(
+                """
+                select s.canonical_symbol as symbol
+                from market.index_membership m
+                join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :symbol
+                join market.security s on s.id = m.security_id
+                where m.as_of_date = :asOf and s.security_type = 'STOCK'
+                order by s.canonical_symbol asc
+                """,
+                params,
+                (rs, rowNum) -> rs.getString("symbol")
+        );
+    }
+
+    public void replaceIndexConstituents(String indexSymbol, List<String> stockSymbols, LocalDate asOf) {
+        long indexId = requireIndexId(indexSymbol);
+        List<String> symbols = stockSymbols == null ? List.of() : stockSymbols;
+        Map<String, Long> idMap = resolveStockIds(symbols);
+        if (idMap.size() != symbols.size()) {
+            for (String s : symbols) {
+                if (!idMap.containsKey(s)) {
+                    throw new IllegalArgumentException("Stock not found: " + s);
+                }
+            }
+        }
+
+        jdbc.update(
+                "delete from market.index_membership where index_id = :indexId and as_of_date = :asOf",
+                new MapSqlParameterSource().addValue("indexId", indexId).addValue("asOf", asOf)
+        );
+
+        if (symbols.isEmpty()) {
+            return;
+        }
+
+        MapSqlParameterSource existingParams = new MapSqlParameterSource()
+                .addValue("indexId", indexId)
+                .addValue("securityIds", idMap.values());
+        List<Map.Entry<Long, LocalDate>> existingDates = jdbc.query(
+                """
+                select security_id, min(coalesce(date_first_added, as_of_date)) as first_added
+                from market.index_membership
+                where index_id = :indexId and security_id in (:securityIds)
+                group by security_id
+                """,
+                existingParams,
+                (rs, rowNum) -> Map.entry(rs.getLong("security_id"), rs.getObject("first_added", LocalDate.class))
+        );
+        Map<Long, LocalDate> firstAdded = new HashMap<>();
+        for (Map.Entry<Long, LocalDate> e : existingDates) {
+            firstAdded.put(e.getKey(), e.getValue());
+        }
+
+        for (String sym : symbols) {
+            Long sid = idMap.get(sym);
+            if (sid == null) continue;
+            LocalDate first = firstAdded.getOrDefault(sid, asOf);
+            jdbc.update(
+                    """
+                    insert into market.index_membership (index_id, security_id, as_of_date, date_first_added)
+                    values (:indexId, :securityId, :asOf, :firstAdded)
+                    on conflict (index_id, security_id, as_of_date) do nothing
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("indexId", indexId)
+                            .addValue("securityId", sid)
+                            .addValue("asOf", asOf)
+                            .addValue("firstAdded", first)
+            );
+        }
     }
 
     public StockDetailDto getStockDetail(String canonicalSymbol, String lang) {

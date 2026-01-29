@@ -94,6 +94,47 @@ export type SyncJobDto = {
   outputTail: string | null
 }
 
+export type IndexListItemDto = {
+  symbol: string
+  name: string | null
+  wikiUrl: string | null
+}
+
+export async function listIndices() {
+  const res = await http.get<IndexListItemDto[]>('/api/indices')
+  return res.data
+}
+
+export async function createStock(params: {
+  symbol: string
+  name?: string
+  wikiUrl?: string
+  indexSymbols?: string[]
+}) {
+  const res = await http.post<void>('/api/admin/stocks', params)
+  return res.data
+}
+
+export async function createIndex(params: {
+  symbol: string
+  name?: string
+  wikiUrl?: string
+  initialStockSymbols?: string[]
+}) {
+  const res = await http.post<IndexListItemDto>('/api/indices', params)
+  return res.data
+}
+
+export async function getIndexConstituents(indexSymbol: string) {
+  const res = await http.get<string[]>(`/api/indices/${encodeURIComponent(indexSymbol)}/constituents`)
+  return res.data
+}
+
+export async function replaceIndexConstituents(indexSymbol: string, stockSymbols: string[]) {
+  const res = await http.put<void>(`/api/indices/${encodeURIComponent(indexSymbol)}/constituents`, { stockSymbols })
+  return res.data
+}
+
 export async function getIndexBars(symbol: string, interval: string = '1d', start?: string, end?: string) {
   const clean = symbol.startsWith('^') ? symbol.substring(1).toLowerCase() : symbol.toLowerCase()
   const res = await http.get<BarDto[]>(`/api/index/${encodeURIComponent(clean)}/bars`, {

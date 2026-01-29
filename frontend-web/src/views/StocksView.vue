@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { ElTable } from 'element-plus'
-import { listStocks, syncStocks, type StockListItemDto } from '../api/market'
+import { createStock, listIndices, listStocks, syncStocks, type IndexListItemDto, type StockListItemDto } from '../api/market'
 
 const router = useRouter()
 
@@ -24,15 +24,23 @@ const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const selectedSymbols = computed(() => selected.value.map((r) => r.symbol))
 const allSelectedOnPage = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
 
-const indices = [
-  { symbol: 'ALL', name: '全部' },
-  { symbol: '^SPX', name: 'S&P 500' },
-  { symbol: '^HSI', name: '恒生指数' },
-  { symbol: '^HSTECH', name: '恒生科技' },
-]
-const activeIndex = ref<'ALL' | '^SPX' | '^HSI' | '^HSTECH'>('^SPX')
-const activeIndexName = computed(() => indices.find(i => i.symbol === activeIndex.value)?.name || activeIndex.value)
-const syncIndex = ref<'^SPX' | '^HSI' | '^HSTECH'>('^SPX')
+const indices = ref<IndexListItemDto[]>([])
+const activeIndex = ref<string>('^SPX')
+const activeIndexName = computed(() => {
+  if (activeIndex.value === 'ALL') return '全部'
+  const found = indices.value.find(i => i.symbol === activeIndex.value)
+  return found?.name || found?.symbol || activeIndex.value
+})
+const syncIndex = ref<string>('^SPX')
+
+const showCreate = ref(false)
+const createSymbol = ref('')
+const createName = ref('')
+const createWikiUrl = ref('')
+const createIndexSymbols = ref<string[]>([])
+
+const selectableIndices = computed(() => indices.value.map(i => i.symbol))
+const hasIndicesLoaded = computed(() => indices.value.length > 0)
 
 async function load() {
   loading.value = true
@@ -103,7 +111,7 @@ function onSortChange(e: any) {
   load()
 }
 
-function changeIndex(sym: 'ALL' | '^SPX' | '^HSI' | '^HSTECH') {
+function changeIndex(sym: string) {
   if (activeIndex.value === sym) return
   activeIndex.value = sym
   if (sym !== 'ALL') {
@@ -113,8 +121,49 @@ function changeIndex(sym: 'ALL' | '^SPX' | '^HSI' | '^HSTECH') {
   load()
 }
 
+async function loadIndices() {
+  try {
+    const list = await listIndices()
+    indices.value = list
+    if (activeIndex.value !== 'ALL' && !list.find(i => i.symbol === activeIndex.value)) {
+      activeIndex.value = 'ALL'
+    }
+    if (!list.find(i => i.symbol === syncIndex.value)) {
+      syncIndex.value = list[0]?.symbol || '^SPX'
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载指数失败')
+  }
+}
+
+async function submitCreateStock() {
+  const symbol = createSymbol.value.trim()
+  if (!symbol) {
+    ElMessage.warning('请填写股票代码')
+    return
+  }
+  try {
+    await createStock({
+      symbol,
+      name: createName.value.trim() || undefined,
+      wikiUrl: createWikiUrl.value.trim() || undefined,
+      indexSymbols: createIndexSymbols.value.length > 0 ? createIndexSymbols.value : undefined,
+    })
+    ElMessage.success('已添加股票')
+    showCreate.value = false
+    createSymbol.value = ''
+    createName.value = ''
+    createWikiUrl.value = ''
+    createIndexSymbols.value = []
+    page.value = 1
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message ?? e?.message ?? '添加失败')
+  }
+}
+
 onMounted(() => {
-  load()
+  loadIndices().then(load)
 })
 </script>
 
@@ -123,12 +172,18 @@ onMounted(() => {
     <el-card shadow="never" style="border-radius: 12px">
       <el-space wrap>
         <el-button
+          :type="activeIndex === 'ALL' ? 'primary' : 'default'"
+          @click="changeIndex('ALL')"
+        >
+          全部
+        </el-button>
+        <el-button
           v-for="idx in indices"
           :key="idx.symbol"
           :type="activeIndex === idx.symbol ? 'primary' : 'default'"
           @click="changeIndex(idx.symbol as any)"
         >
-          {{ idx.name }}
+          {{ idx.name || idx.symbol }}
         </el-button>
       </el-space>
     </el-card>
@@ -143,6 +198,7 @@ onMounted(() => {
           </div>
         </div>
         <el-space>
+          <el-button :disabled="!hasIndicesLoaded" @click="showCreate = true">增加股票</el-button>
           <el-input
             v-model="query"
             placeholder="搜索：股票代码 / 公司名 / 简称"
@@ -154,10 +210,13 @@ onMounted(() => {
           <el-button :disabled="rows.length === 0" @click="toggleSelectAllCurrentPage">
             {{ allSelectedOnPage ? '取消全选' : '全选当前页' }}
           </el-button>
-          <el-select v-model="syncIndex" size="small" style="width: 140px" :disabled="activeIndex !== 'ALL'">
-            <el-option label="同步：S&P 500" value="^SPX" />
-            <el-option label="同步：恒生指数" value="^HSI" />
-            <el-option label="同步：恒生科技" value="^HSTECH" />
+          <el-select v-model="syncIndex" size="small" style="width: 160px" :disabled="activeIndex !== 'ALL'">
+            <el-option
+              v-for="idx in indices"
+              :key="idx.symbol"
+              :label="`同步：${idx.name || idx.symbol}`"
+              :value="idx.symbol"
+            />
           </el-select>
           <el-button type="primary" :loading="syncing" @click="syncSelected">同步数据</el-button>
         </el-space>
@@ -208,4 +267,29 @@ onMounted(() => {
       </div>
     </el-card>
   </el-space>
+
+  <el-dialog v-model="showCreate" title="增加股票" width="520px">
+    <el-form label-width="92px">
+      <el-form-item label="股票代码">
+        <el-input v-model="createSymbol" placeholder="例如：AAPL / 00005" />
+      </el-form-item>
+      <el-form-item label="名称">
+        <el-input v-model="createName" placeholder="可不填" />
+      </el-form-item>
+      <el-form-item label="Wiki URL">
+        <el-input v-model="createWikiUrl" placeholder="可不填" />
+      </el-form-item>
+      <el-form-item label="所属指数">
+        <el-select v-model="createIndexSymbols" multiple filterable style="width: 100%" placeholder="可不选">
+          <el-option v-for="sym in selectableIndices" :key="sym" :label="sym" :value="sym" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-space>
+        <el-button @click="showCreate = false">取消</el-button>
+        <el-button type="primary" @click="submitCreateStock">确定</el-button>
+      </el-space>
+    </template>
+  </el-dialog>
 </template>

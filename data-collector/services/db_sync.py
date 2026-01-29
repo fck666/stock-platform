@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterable
@@ -11,6 +12,13 @@ import requests
 from collectors.sp500_list import fetch_sp500_companies, filter_symbols
 from collectors.hangseng_list import fetch_hsi_components, fetch_hstech_components
 from collectors.stooq_price import fetch_prices_range
+from collectors.stooq_operations import fetch_stooq_fundamentals
+from collectors.eodhd import (
+    canonical_to_eodhd_symbol,
+    fetch_eodhd_dividends,
+    fetch_eodhd_fundamentals,
+    fetch_eodhd_splits,
+)
 from collectors.yahoo_finance import (
     canonical_to_yahoo_symbol,
     fetch_yahoo_corporate_actions,
@@ -20,7 +28,7 @@ from collectors.sec_facts import fetch_sec_shares_outstanding
 from collectors.wiki_info import fetch_company_wiki_summaries
 from db.connection import DbConfig, get_connection
 from db.stock_repo import StockRepository
-from utils.date_utils import parse_ymd, yesterday_ymd
+from utils.date_utils import parse_ymd
 
 
 log = logging.getLogger(__name__)
@@ -118,9 +126,11 @@ def sync_index_wiki_to_db(
 
         securities_upserted = 0
         symbol_to_security_id: dict[str, int] = {}
-        for _, r in companies.iterrows():
+        log.info("Upserting %d securities for index %s", len(companies), index_symbol)
+        for i, (_, r) in enumerate(companies.iterrows()):
             canonical_symbol = str(r["symbol"]).strip().upper()
             security_name = str(r.get("security") or "").strip() or None
+            log.info("[%d/%d] Upserting security: %s", i + 1, len(companies), canonical_symbol)
             security_id = repo.upsert_security(
                 security_type="STOCK",
                 canonical_symbol=canonical_symbol,
@@ -195,14 +205,32 @@ def sync_index_fundamentals_to_db(
     actions_upserted = 0
     securities_scanned = 0
 
+    eodhd_api_token = os.getenv("EODHD_API_TOKEN") or None
+    metadata_provider = (os.getenv("METADATA_PROVIDER") or "auto").strip().lower()
+    eodhd_use_for_spx = (os.getenv("EODHD_USE_FOR_SPX") or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+    if metadata_provider not in {"auto", "yahoo", "eodhd"}:
+        log.warning("Unknown METADATA_PROVIDER=%s, falling back to auto", metadata_provider)
+        metadata_provider = "auto"
+    if metadata_provider == "eodhd" and eodhd_api_token is None:
+        log.warning("METADATA_PROVIDER=eodhd but EODHD_API_TOKEN is not set. Falling back to Yahoo.")
+    log.info(
+        "EODHD enabled: %s (index=%s, token_set=%s, spx_enabled=%s)",
+        "METADATA_PROVIDER=%s (index=%s, token_set=%s, legacy_spx=%s)",
+        metadata_provider,
+        eodhd_api_token is not None,
+        eodhd_use_for_spx,
+    )
+
     with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
+        repo = StockRepository(conn)
         repo = StockRepository(conn)
         repo.ensure_search_path()
 
         try:
             from collectors.yahoo_finance import warmup_yahoo_session
 
-            warmup_yahoo_session(http, timeout=http_timeout_seconds, user_agent=user_agent)
+            if metadata_provider != "eodhd" or eodhd_api_token is None:
+                warmup_yahoo_session(http, timeout=http_timeout_seconds, user_agent=user_agent)
         except Exception:
             pass
 
@@ -221,27 +249,88 @@ def sync_index_fundamentals_to_db(
 
         today = datetime.utcnow().date()
         recent_cutoff = today - timedelta(days=370)
-        for c in constituents:
+        log.info("Scanning fundamentals for %d constituents of %s", len(constituents), index_symbol)
+        for i, c in enumerate(constituents):
             securities_scanned += 1
+            is_hk = index_symbol in {"^HSI", "^HSTECH"}
+            use_eodhd = False
+            if metadata_provider == "eodhd":
+                use_eodhd = eodhd_api_token is not None
+            elif metadata_provider == "auto":
+                use_eodhd = (is_hk or (index_symbol == "^SPX" and eodhd_use_for_spx)) and eodhd_api_token is not None
             yahoo_symbol = canonical_to_yahoo_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
-            repo.upsert_security_identifier(security_id=c.security_id, provider="yahoo", identifier=yahoo_symbol)
+            log.info("[%d/%d] Processing %s (%s)", i + 1, len(constituents), c.canonical_symbol, yahoo_symbol)
+            if use_eodhd:
+                eodhd_symbol = canonical_to_eodhd_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
+                log.info("[%s] Using EODHD symbol %s", c.canonical_symbol, eodhd_symbol)
+                repo.upsert_security_identifier(security_id=c.security_id, provider="eodhd", identifier=eodhd_symbol)
+            elif not is_hk:
+                repo.upsert_security_identifier(security_id=c.security_id, provider="yahoo", identifier=yahoo_symbol)
 
             try:
                 if not repo.has_any_fundamental_snapshot(security_id=c.security_id, as_of_date=today):
                     try:
-                        fund = fetch_yahoo_fundamentals(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
-                        repo.upsert_fundamental_snapshot(
-                            security_id=c.security_id,
-                            as_of_date=today,
-                            shares_outstanding=fund.shares_outstanding,
-                            float_shares=fund.float_shares,
-                            market_cap=fund.market_cap,
-                            currency=fund.currency,
-                            source="yahoo",
-                        )
-                        snapshots_upserted += 1
+                        if use_eodhd:
+                            eodhd_symbol = canonical_to_eodhd_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
+                            fund = fetch_eodhd_fundamentals(
+                                http,
+                                eodhd_symbol=eodhd_symbol,
+                                api_token=eodhd_api_token,
+                                timeout=http_timeout_seconds,
+                                user_agent=user_agent,
+                            )
+                            currency = fund.currency or repo.get_security_currency(security_id=c.security_id) or ("HKD" if is_hk else "USD")
+                            repo.upsert_fundamental_snapshot(
+                                security_id=c.security_id,
+                                as_of_date=today,
+                                shares_outstanding=fund.shares_outstanding,
+                                float_shares=None,
+                                market_cap=fund.market_cap,
+                                currency=currency,
+                                source="eodhd",
+                            )
+                            snapshots_upserted += 1
+                        else:
+                            fund = fetch_yahoo_fundamentals(http, yahoo_symbol, timeout=http_timeout_seconds, user_agent=user_agent)
+                            repo.upsert_fundamental_snapshot(
+                                security_id=c.security_id,
+                                as_of_date=today,
+                                shares_outstanding=fund.shares_outstanding,
+                                float_shares=fund.float_shares,
+                                market_cap=fund.market_cap,
+                                currency=fund.currency,
+                                source="yahoo",
+                            )
+                            snapshots_upserted += 1
                     except Exception as e:
-                        log.warning("Failed fetching yahoo fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
+                        if use_eodhd:
+                            log.warning("Failed fetching EODHD fundamentals for %s (%s): %s", c.canonical_symbol, c.stooq_symbol, e)
+                            try:
+                                fund_payload = fetch_stooq_fundamentals(
+                                    http, c.stooq_symbol, timeout=http_timeout_seconds, user_agent=user_agent
+                                )
+                                shares_outstanding = fund_payload.get("shares_outstanding")
+                                market_cap = fund_payload.get("market_cap")
+                                currency = repo.get_security_currency(security_id=c.security_id) or "HKD"
+                                repo.upsert_fundamental_snapshot(
+                                    security_id=c.security_id,
+                                    as_of_date=today,
+                                    shares_outstanding=int(shares_outstanding) if shares_outstanding is not None else None,
+                                    float_shares=None,
+                                    market_cap=float(market_cap) if market_cap is not None else None,
+                                    currency=currency,
+                                    source="stooq",
+                                )
+                                snapshots_upserted += 1
+                            except Exception as e2:
+                                log.warning(
+                                    "Failed fetching Stooq fundamentals fallback for %s (%s): %s",
+                                    c.canonical_symbol,
+                                    c.stooq_symbol,
+                                    e2,
+                                )
+                        else:
+                            log.warning("Failed fetching yahoo fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
                         if index_symbol == "^SPX":
                             cik = repo.get_security_cik(security_id=c.security_id)
                             if cik:
@@ -267,32 +356,89 @@ def sync_index_fundamentals_to_db(
                 log.warning("Failed syncing fundamentals for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
 
             try:
-                existing_count = repo.count_corporate_actions(security_id=c.security_id, source="yahoo")
-                max_ex_date = repo.get_latest_corporate_action_ex_date(security_id=c.security_id, source="yahoo") if existing_count > 0 else None
+                action_source = "eodhd" if use_eodhd else "yahoo"
+                existing_count = repo.count_corporate_actions(security_id=c.security_id, source=action_source)
+                max_ex_date = (
+                    repo.get_latest_corporate_action_ex_date(security_id=c.security_id, source=action_source)
+                    if existing_count > 0
+                    else None
+                )
                 if existing_count > 0 and max_ex_date is not None and max_ex_date >= recent_cutoff:
                     log.info("Skip corporate actions (recent enough: %s) for %s (%s)", max_ex_date, c.canonical_symbol, yahoo_symbol)
                 else:
-                    range_ = "max" if existing_count == 0 else "2y"
-                    actions = fetch_yahoo_corporate_actions(
-                        http,
-                        yahoo_symbol,
-                        timeout=http_timeout_seconds,
-                        user_agent=user_agent,
-                        range_=range_,
-                    )
-                    for a in actions:
-                        repo.upsert_corporate_action(
-                            security_id=c.security_id,
-                            ex_date=a.ex_date,
-                            action_type=a.action_type,
-                            cash_amount=a.cash_amount,
-                            currency=a.currency,
-                            split_numerator=a.split_numerator,
-                            split_denominator=a.split_denominator,
-                            source="yahoo",
-                            raw_payload=a.raw_payload,
+                    if use_eodhd:
+                        eodhd_symbol = canonical_to_eodhd_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
+                        from_date = "2000-01-01" if max_ex_date is None else (max_ex_date - timedelta(days=30)).isoformat()
+                        to_date = today.isoformat()
+                        currency_default = repo.get_security_currency(security_id=c.security_id) or ("HKD" if is_hk else "USD")
+
+                        dividends = fetch_eodhd_dividends(
+                            http,
+                            eodhd_symbol=eodhd_symbol,
+                            api_token=eodhd_api_token,
+                            from_date=from_date,
+                            to_date=to_date,
+                            timeout=http_timeout_seconds,
+                            user_agent=user_agent,
                         )
-                        actions_upserted += 1
+                        for d in dividends:
+                            repo.upsert_corporate_action(
+                                security_id=c.security_id,
+                                ex_date=d.ex_date,
+                                action_type="DIVIDEND",
+                                cash_amount=d.cash_amount,
+                                currency=d.currency or currency_default,
+                                split_numerator=None,
+                                split_denominator=None,
+                                source="eodhd",
+                                raw_payload=d.raw_payload,
+                            )
+                            actions_upserted += 1
+
+                        splits = fetch_eodhd_splits(
+                            http,
+                            eodhd_symbol=eodhd_symbol,
+                            api_token=eodhd_api_token,
+                            from_date=from_date,
+                            to_date=to_date,
+                            timeout=http_timeout_seconds,
+                            user_agent=user_agent,
+                        )
+                        for s in splits:
+                            repo.upsert_corporate_action(
+                                security_id=c.security_id,
+                                ex_date=s.ex_date,
+                                action_type="SPLIT",
+                                cash_amount=None,
+                                currency=None,
+                                split_numerator=s.split_numerator,
+                                split_denominator=s.split_denominator,
+                                source="eodhd",
+                                raw_payload=s.raw_payload,
+                            )
+                            actions_upserted += 1
+                    else:
+                        range_ = "max" if existing_count == 0 else "2y"
+                        actions = fetch_yahoo_corporate_actions(
+                            http,
+                            yahoo_symbol,
+                            timeout=http_timeout_seconds,
+                            user_agent=user_agent,
+                            range_=range_,
+                        )
+                        for a in actions:
+                            repo.upsert_corporate_action(
+                                security_id=c.security_id,
+                                ex_date=a.ex_date,
+                                action_type=a.action_type,
+                                cash_amount=a.cash_amount,
+                                currency=a.currency,
+                                split_numerator=a.split_numerator,
+                                split_denominator=a.split_denominator,
+                                source="yahoo",
+                                raw_payload=a.raw_payload,
+                            )
+                            actions_upserted += 1
             except Exception as e:
                 log.warning("Failed fetching corporate actions for %s (%s): %s", c.canonical_symbol, yahoo_symbol, e)
             try:
@@ -375,6 +521,124 @@ def _df_to_price_rows(
     return rows
 
 
+def _sync_single_security_prices(
+    *,
+    repo: StockRepository,
+    http: requests.Session,
+    security_id: int,
+    canonical_symbol: str,
+    stooq_symbol: str,
+    start: date,
+    end: date,
+    interval: str,
+    freq: str,
+    http_timeout_seconds: float,
+    user_agent: str,
+    source: str = "stooq",
+) -> int:
+    """
+    Syncs prices for a single security. Detects adjustments (splits/dividends)
+    and re-syncs full history if necessary.
+    """
+    max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
+    effective_start = start
+    if max_date is not None:
+        # Look back 7 days to catch any data updates/fixes from provider
+        effective_start = max(start, max_date - timedelta(days=7))
+
+    if effective_start > end:
+        return 0
+
+    bars_upserted = 0
+    # Use a flag to avoid redundant re-syncs in the same call
+    full_history_synced = False
+
+    for chunk_start, chunk_end in _iter_date_ranges(effective_start, end, max_days=4000):
+        if full_history_synced:
+            break
+
+        log.info("[%s] Fetching prices from %s to %s", canonical_symbol, chunk_start, chunk_end)
+        try:
+            df = fetch_prices_range(
+                session=http,
+                stooq_symbol=stooq_symbol,
+                start_date=chunk_start,
+                end_date=chunk_end,
+                freq=freq,
+                timeout=http_timeout_seconds,
+                user_agent=user_agent,
+                pause_seconds=0.1,
+            )
+
+            if df.empty:
+                log.info("[%s] No data found for this range", canonical_symbol)
+                continue
+
+            # Detect splits/dividends:
+            if max_date is not None and not full_history_synced:
+                overlap_df = df[df["date"].dt.date <= max_date]
+                if not overlap_df.empty:
+                    db_prices = repo.get_price_bars_map(
+                        security_id=security_id,
+                        interval=interval,
+                        start_date=overlap_df["date"].min().date(),
+                        end_date=overlap_df["date"].max().date(),
+                    )
+
+                    mismatch_found = False
+                    for _, r in overlap_df.iterrows():
+                        d = r["date"].date()
+                        new_close = float(r["close"])
+                        old_close = db_prices.get(d)
+                        # If difference > 0.5%, assume corporate action (split/dividend)
+                        if old_close is not None and abs(new_close - old_close) / old_close > 0.005:
+                            log.info(
+                                "Adjustment detected for %s at %s (old: %s, new: %s). Re-syncing full history.",
+                                canonical_symbol,
+                                d,
+                                old_close,
+                                new_close,
+                            )
+                            mismatch_found = True
+                            break
+
+                    if mismatch_found:
+                        repo.delete_price_bars(security_id=security_id, interval=interval)
+                        # Re-fetch the ENTIRE range from the absolute start
+                        log.info("[%s] Resetting and fetching full history from %s", canonical_symbol, start)
+                        df = fetch_prices_range(
+                            session=http,
+                            stooq_symbol=stooq_symbol,
+                            start_date=start,
+                            end_date=end,
+                            freq=freq,
+                            timeout=http_timeout_seconds,
+                            user_agent=user_agent,
+                            pause_seconds=0.1,
+                        )
+                        full_history_synced = True
+        except Exception as e:
+            log.warning(
+                "Failed fetching %s (%s) %s..%s: %s",
+                canonical_symbol,
+                stooq_symbol,
+                chunk_start,
+                chunk_end,
+                e,
+            )
+            if "rate limit exceeded" in str(e).lower() or "daily hits limit" in str(e).lower():
+                raise
+            continue
+
+        if not df.empty:
+            rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source=source)
+            count = repo.upsert_price_bars(rows)
+            bars_upserted += count
+            log.info("[%s] Upserted %d bars", canonical_symbol, count)
+
+    return bars_upserted
+
+
 def sync_indices_prices_to_db(
     *,
     db_dsn: str,
@@ -404,77 +668,19 @@ def sync_indices_prices_to_db(
             stooq_symbol = meta["stooq"]
             repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
 
-            max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
-            effective_start = start
-            if max_date is not None:
-                # Look back 7 days to catch any data updates/fixes from provider
-                effective_start = max(start, max_date - timedelta(days=7))
-            
-            if effective_start > end:
-                continue
-
-            for chunk_start, chunk_end in _iter_date_ranges(effective_start, end, max_days=4000):
-                try:
-                    df = fetch_prices_range(
-                        session=http,
-                        stooq_symbol=stooq_symbol,
-                        start_date=chunk_start,
-                        end_date=chunk_end,
-                        freq=freq,
-                        timeout=http_timeout_seconds,
-                        user_agent=user_agent,
-                        pause_seconds=0.1,
-                    )
-                    
-                    # Detect splits/dividends:
-                    # If we have existing data in the lookback period, compare close prices.
-                    if max_date is not None and not df.empty:
-                        overlap_df = df[df["date"].dt.date <= max_date]
-                        if not overlap_df.empty:
-                            # Fetch current DB values for these dates
-                            db_prices = repo.get_price_bars_map(
-                                security_id=security_id, 
-                                interval=interval, 
-                                start_date=overlap_df["date"].min().date(),
-                                end_date=overlap_df["date"].max().date()
-                            )
-                            
-                            mismatch_found = False
-                            for _, r in overlap_df.iterrows():
-                                d = r["date"].date()
-                                new_close = float(r["close"])
-                                old_close = db_prices.get(d)
-                                if old_close is not None:
-                                    # If difference > 0.5%, assume corporate action (split/dividend)
-                                    if abs(new_close - old_close) / old_close > 0.005:
-                                        log.info("Adjustment detected for %s at %s (old: %s, new: %s). Re-syncing full history.", 
-                                                 canonical_symbol, d, old_close, new_close)
-                                        mismatch_found = True
-                                        break
-                            
-                            if mismatch_found:
-                                repo.delete_price_bars(security_id=security_id, interval=interval)
-                                # Restart fetching from the very beginning
-                                return sync_index_prices_to_db(
-                                    db_dsn=db_dsn,
-                                    index_symbol=index_symbol,
-                                    start_date=start_date, # original start
-                                    end_date=end_date,
-                                    interval=interval,
-                                    symbols=[canonical_symbol], # only this one
-                                    limit=None,
-                                    http_timeout_seconds=http_timeout_seconds,
-                                    user_agent=user_agent,
-                                    include_indices=False
-                                )
-                except Exception as e:
-                    log.warning("Failed fetching %s (%s) %s..%s: %s", canonical_symbol, stooq_symbol, chunk_start, chunk_end, e)
-                    if "rate limit exceeded" in str(e).lower() or "daily hits limit" in str(e).lower():
-                        raise
-                    continue
-
-                rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source="stooq")
-                bars_upserted += repo.upsert_price_bars(rows)
+            bars_upserted += _sync_single_security_prices(
+                repo=repo,
+                http=http,
+                security_id=security_id,
+                canonical_symbol=canonical_symbol,
+                stooq_symbol=stooq_symbol,
+                start=start,
+                end=end,
+                interval=interval,
+                freq=freq,
+                http_timeout_seconds=http_timeout_seconds,
+                user_agent=user_agent,
+            )
 
     return PriceSyncResult(securities_scanned=securities_scanned, bars_upserted=bars_upserted)
 
@@ -518,89 +724,24 @@ def sync_index_prices_to_db(
 
         for c in constituents:
             securities_scanned += 1
-            canonical_symbol = c.canonical_symbol
-            stooq_symbol = c.stooq_symbol
-            security_id = c.security_id
-
-            max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
-            effective_start = start
-            if max_date is not None:
-                # Look back 7 days to catch any data updates/fixes from provider
-                effective_start = max(start, max_date - timedelta(days=7))
-            
-            if effective_start > end:
-                continue
-
-            for chunk_start, chunk_end in _iter_date_ranges(effective_start, end, max_days=4000):
-                try:
-                    df = fetch_prices_range(
-                        session=http,
-                        stooq_symbol=stooq_symbol,
-                        start_date=chunk_start,
-                        end_date=chunk_end,
-                        freq=freq,
-                        timeout=http_timeout_seconds,
-                        user_agent=user_agent,
-                        pause_seconds=0.1,
-                    )
-                    
-                    # Detect splits/dividends:
-                    if max_date is not None and not df.empty:
-                        overlap_df = df[df["date"].dt.date <= max_date]
-                        if not overlap_df.empty:
-                            db_prices = repo.get_price_bars_map(
-                                security_id=security_id, 
-                                interval=interval, 
-                                start_date=overlap_df["date"].min().date(),
-                                end_date=overlap_df["date"].max().date()
-                            )
-                            mismatch_found = False
-                            for _, r in overlap_df.iterrows():
-                                d = r["date"].date()
-                                new_close = float(r["close"])
-                                old_close = db_prices.get(d)
-                                if old_close is not None and abs(new_close - old_close) / old_close > 0.005:
-                                    log.info("Adjustment detected for %s. Re-syncing full history.", canonical_symbol)
-                                    mismatch_found = True
-                                    break
-                            
-                            if mismatch_found:
-                                repo.delete_price_bars(security_id=security_id, interval=interval)
-                                # Trigger a re-sync for this specific security in the next loop or recursive call
-                                # For simplicity in this loop, we continue to the next security after resetting this one
-                                # but the most robust way is to re-run the sync for this symbol.
-                                # Let's just reset the effective_start and re-run for this symbol:
-                                df = fetch_prices_range(
-                                    session=http,
-                                    stooq_symbol=stooq_symbol,
-                                    start_date=start,
-                                    end_date=end,
-                                    freq=freq,
-                                    timeout=http_timeout_seconds,
-                                    user_agent=user_agent,
-                                    pause_seconds=0.1,
-                                )
-                except Exception as e:
-                    log.warning(
-                        "Failed fetching %s (%s) %s..%s: %s",
-                        canonical_symbol,
-                        stooq_symbol,
-                        chunk_start,
-                        chunk_end,
-                        e,
-                    )
-                    if "rate limit exceeded" in str(e).lower() or "daily hits limit" in str(e).lower():
-                        raise
-                    continue
-
-                rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source="stooq")
-                bars_upserted += repo.upsert_price_bars(rows)
+            bars_upserted += _sync_single_security_prices(
+                repo=repo,
+                http=http,
+                security_id=c.security_id,
+                canonical_symbol=c.canonical_symbol,
+                stooq_symbol=c.stooq_symbol,
+                start=start,
+                end=end,
+                interval=interval,
+                freq=freq,
+                http_timeout_seconds=http_timeout_seconds,
+                user_agent=user_agent,
+            )
 
     if include_indices:
         # Also sync the index price itself
         idx_meta = DEFAULT_INDICES.get(index_symbol)
         if idx_meta:
-            stooq_idx = idx_meta["stooq"]
             with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
                 repo = StockRepository(conn)
                 repo.ensure_search_path()
@@ -609,31 +750,23 @@ def sync_index_prices_to_db(
                     canonical_symbol=index_symbol,
                     name=idx_meta["name"],
                 )
+                stooq_idx = idx_meta["stooq"]
                 repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_idx)
 
-                max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
-                effective_start = start
-                if max_date is not None:
-                    effective_start = max(effective_start, max_date + timedelta(days=1))
-                
-                if effective_start <= end:
-                    for chunk_start, chunk_end in _iter_date_ranges(effective_start, end, max_days=4000):
-                        try:
-                            df = fetch_prices_range(
-                                session=http,
-                                stooq_symbol=stooq_idx,
-                                start_date=chunk_start,
-                                end_date=chunk_end,
-                                freq=freq,
-                                timeout=http_timeout_seconds,
-                                user_agent=user_agent,
-                                pause_seconds=0.1,
-                            )
-                            rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source="stooq")
-                            bars_upserted += repo.upsert_price_bars(rows)
-                            securities_scanned += 1
-                        except Exception as e:
-                            log.warning("Failed fetching index %s: %s", index_symbol, e)
+                bars_upserted += _sync_single_security_prices(
+                    repo=repo,
+                    http=http,
+                    security_id=security_id,
+                    canonical_symbol=index_symbol,
+                    stooq_symbol=stooq_idx,
+                    start=start,
+                    end=end,
+                    interval=interval,
+                    freq=freq,
+                    http_timeout_seconds=http_timeout_seconds,
+                    user_agent=user_agent,
+                )
+                securities_scanned += 1
 
     return PriceSyncResult(securities_scanned=securities_scanned, bars_upserted=bars_upserted)
 

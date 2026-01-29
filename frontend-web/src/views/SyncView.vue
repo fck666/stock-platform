@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { syncWiki, syncFundamentals, syncPrices, syncStocks, getSyncJob, type SyncJobDto } from '../api/market'
+import { listIndices, syncWiki, syncFundamentals, syncPrices, syncStocks, getSyncJob, type IndexListItemDto, type SyncJobDto } from '../api/market'
 
 const activeJobs = ref<SyncJobDto[]>([])
 const finishedJobs = ref<SyncJobDto[]>([])
@@ -25,12 +25,19 @@ async function startJob(action: () => Promise<SyncJobDto>) {
   }
 }
 
-const indices = [
-  { symbol: '^SPX', name: 'S&P 500' },
-  { symbol: '^HSI', name: '恒生指数' },
-  { symbol: '^HSTECH', name: '恒生科技' },
-]
+const indices = ref<IndexListItemDto[]>([])
 const activeIndex = ref('^SPX')
+
+async function loadIndices() {
+  try {
+    indices.value = await listIndices()
+    if (!indices.value.find(i => i.symbol === activeIndex.value)) {
+      activeIndex.value = indices.value[0]?.symbol || '^SPX'
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载指数失败')
+  }
+}
 
 async function handleSyncWiki() {
   await startJob(() => syncWiki(activeIndex.value))
@@ -98,6 +105,7 @@ function stopPolling() {
 }
 
 onMounted(() => {
+  loadIndices()
   if (activeJobs.value.length > 0) startPolling()
 })
 

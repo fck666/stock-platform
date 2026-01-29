@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, date
 
 import requests
+import yfinance as yf
 
 log = logging.getLogger(__name__)
 
@@ -21,16 +22,32 @@ def warmup_yahoo_session(session: requests.Session, *, timeout: float, user_agen
     global _WARMED_UP
     if _WARMED_UP:
         return
+    
+    # Updated warmup strategy: visit fc.yahoo.com first to get the initial cookie
     headers = {
         "User-Agent": user_agent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
     }
     try:
-        session.get("https://finance.yahoo.com/", headers=headers, timeout=timeout)
+        # Step 1: Visit fc.yahoo.com to get a fresh cookie
+        log.info("Warming up Yahoo session via fc.yahoo.com")
+        session.get("https://fc.yahoo.com", headers=headers, timeout=timeout, allow_redirects=True)
+        
+        # Step 2: Visit the main finance page
+        session.get("https://finance.yahoo.com/", headers=headers, timeout=timeout, allow_redirects=True)
+        
+        # Step 3: Get crumb
         _refresh_crumb(session, timeout=timeout, user_agent=user_agent)
         _WARMED_UP = True
-    except Exception:
+    except Exception as e:
+        log.warning("Yahoo session warmup failed: %s", e)
         return
 
 
@@ -38,18 +55,32 @@ def _refresh_crumb(session: requests.Session, *, timeout: float, user_agent: str
     global _CRUMB, _CRUMB_AT
     headers = {
         "User-Agent": user_agent,
-        "Accept": "text/plain,*/*",
-        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://finance.yahoo.com/",
+        "Origin": "https://finance.yahoo.com",
     }
     try:
-        resp = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", headers=headers, timeout=timeout)
-        if resp.status_code == 200:
-            crumb = (resp.text or "").strip()
-            if crumb and len(crumb) < 64 and "\n" not in crumb:
-                _CRUMB = crumb
-                _CRUMB_AT = time.time()
-    except Exception:
+        # Try multiple crumb endpoints
+        endpoints = [
+            "https://query2.finance.yahoo.com/v1/test/getcrumb",
+            "https://query1.finance.yahoo.com/v1/test/getcrumb"
+        ]
+        for url in endpoints:
+            resp = session.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                crumb = (resp.text or "").strip()
+                # Yahoo sometimes returns 'Too Many Requests' as the text instead of a real crumb
+                if crumb and len(crumb) < 20 and "Request" not in crumb:
+                    _CRUMB = crumb
+                    _CRUMB_AT = time.time()
+                    log.info("Successfully refreshed Yahoo crumb: %s", _CRUMB)
+                    return
+                else:
+                    log.warning("Received invalid crumb text: %s", crumb)
+        log.warning("Failed to refresh Yahoo crumb from all endpoints")
+    except Exception as e:
+        log.warning("Error refreshing Yahoo crumb: %s", e)
         return
 
 
@@ -73,28 +104,39 @@ def _request_json(
     headers = {
         "User-Agent": user_agent,
         "Accept": "application/json,text/plain,*/*",
-        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://finance.yahoo.com/",
     }
 
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            effective_url = _maybe_add_crumb(url) if "quoteSummary" in url else url
+            # Only add crumb if we actually have one
+            effective_url = _maybe_add_crumb(url) if ("quoteSummary" in url or "finance/quote" in url) else url
             resp = session.get(effective_url, headers=headers, timeout=timeout)
+            
             if resp.status_code == 401:
+                log.info("Yahoo 401 detected, re-warming session...")
+                global _WARMED_UP
+                _WARMED_UP = False
                 warmup_yahoo_session(session, timeout=timeout, user_agent=user_agent)
-                _refresh_crumb(session, timeout=timeout, user_agent=user_agent)
-                raise RuntimeError(f"HTTP 401 for {url}")
+                # Retry with new session
+                continue
+                
             if resp.status_code == 429:
+                log.warning("Yahoo 429 (Rate Limit) for %s. Attempt %d/%d", url, attempt + 1, max_retries + 1)
                 retry_after = resp.headers.get("Retry-After")
                 if retry_after and retry_after.isdigit():
                     _sleep_with_jitter(float(retry_after))
                 else:
                     _sleep_with_jitter(10.0 * (attempt + 1))
-                raise RuntimeError(f"HTTP 429 for {url}")
+                continue
+
             if resp.status_code in (500, 502, 503, 504):
-                raise RuntimeError(f"HTTP {resp.status_code} for {url}")
+                log.warning("Yahoo %d for %s. Attempt %d", resp.status_code, url, attempt + 1)
+                _sleep_with_jitter(2.0 * (attempt + 1))
+                continue
+
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -102,12 +144,13 @@ def _request_json(
             if attempt >= max_retries:
                 break
             _sleep_with_jitter(1.5 * (2**attempt))
+    
     raise last_err or RuntimeError(f"Failed requesting {url}")
 
 
 def canonical_to_yahoo_symbol(*, canonical_symbol: str, index_symbol: str | None = None) -> str:
     s = canonical_symbol.strip().upper()
-    if index_symbol and index_symbol.upper() in {"^HSI", "^HSTECH"}:
+    if index_symbol and (index_symbol.upper() in {"^HSI", "^HSTECH"} or index_symbol.upper().startswith("^HK")):
         digits = "".join([c for c in s if c.isdigit()])
         if digits:
             n = int(digits)
@@ -134,6 +177,35 @@ def fetch_yahoo_fundamentals(
     timeout: float,
     user_agent: str,
 ) -> YahooFundamentals:
+    """
+    Fetches fundamentals. Attempts yfinance first as it is more robust, 
+    then falls back to manual requests.
+    """
+    # Attempt 1: yfinance (it handles session/crumb complexity internally)
+    try:
+        log.info("[%s] Attempting yfinance for fundamentals", yahoo_symbol)
+        ticker = yf.Ticker(yahoo_symbol)
+        
+        # yfinance info can be slow or blocked too, but it has internal retries
+        info = ticker.info
+        if info and "symbol" in info:
+            market_cap = info.get("marketCap")
+            shares_outstanding = info.get("sharesOutstanding")
+            float_shares = info.get("floatShares")
+            currency = info.get("currency")
+            
+            if market_cap or shares_outstanding:
+                return YahooFundamentals(
+                    market_cap=market_cap,
+                    shares_outstanding=shares_outstanding,
+                    float_shares=float_shares,
+                    currency=currency,
+                    raw_payload=info,
+                )
+    except Exception as e:
+        log.warning("[%s] yfinance failed: %s. Falling back to manual requests.", yahoo_symbol, e)
+
+    # Attempt 2: Manual quoteSummary
     warmup_yahoo_session(session, timeout=timeout, user_agent=user_agent)
 
     quote_summary_url = (
@@ -174,8 +246,9 @@ def fetch_yahoo_fundamentals(
             raw_payload=payload,
         )
     except Exception as e:
-        log.warning("quoteSummary failed for %s: %s", yahoo_symbol, e)
+        log.warning("[%s] quoteSummary failed: %s", yahoo_symbol, e)
 
+    # Attempt 3: Manual quote (v7)
     quote_url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={yahoo_symbol}"
     payload = _request_json(session, quote_url, timeout=timeout, user_agent=user_agent)
     result = (payload.get("quoteResponse") or {}).get("result") or []
@@ -214,6 +287,57 @@ def fetch_yahoo_corporate_actions(
     user_agent: str,
     range_: str = "max",
 ) -> list[YahooCorporateAction]:
+    """
+    Fetches corporate actions (dividends, splits).
+    Attempts yfinance first, then falls back to manual chart requests.
+    """
+    # Attempt 1: yfinance
+    try:
+        log.info("[%s] Attempting yfinance for corporate actions", yahoo_symbol)
+        ticker = yf.Ticker(yahoo_symbol)
+        
+        # Fetch actions
+        actions = ticker.actions
+        out: list[YahooCorporateAction] = []
+        
+        if actions is not None and not actions.empty:
+            for idx, row in actions.iterrows():
+                ex_date = idx.date()
+                div = row.get("Dividends")
+                split = row.get("Stock Splits")
+                
+                if div and div > 0:
+                    out.append(YahooCorporateAction(
+                        ex_date=ex_date,
+                        action_type="DIVIDEND",
+                        cash_amount=float(div),
+                        currency=None, # yfinance actions don't always have currency here
+                        split_numerator=None,
+                        split_denominator=None,
+                        raw_payload=row.to_dict(),
+                    ))
+                
+                if split and split > 0:
+                    # yfinance split is usually 2.0 for 2-for-1
+                    # We need numerator/denominator
+                    # Often it's just a float, so we approximate
+                    out.append(YahooCorporateAction(
+                        ex_date=ex_date,
+                        action_type="SPLIT",
+                        cash_amount=None,
+                        currency=None,
+                        split_numerator=int(split) if split >= 1 else 1,
+                        split_denominator=1 if split >= 1 else int(1/split),
+                        raw_payload=row.to_dict(),
+                    ))
+            
+            if out:
+                out.sort(key=lambda x: x.ex_date, reverse=True)
+                return out
+    except Exception as e:
+        log.warning("[%s] yfinance actions failed: %s. Falling back to manual chart requests.", yahoo_symbol, e)
+
+    # Attempt 2: Manual chart endpoint
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
         f"?range={range_}&interval=1d&events=div%2Csplits"
