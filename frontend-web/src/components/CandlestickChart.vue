@@ -11,6 +11,7 @@ const props = defineProps<{
   windowEnd?: number
   showSlider?: boolean
   maLines?: Record<string, Array<number | null>>
+  markers?: Array<{ date: string; type: 'DIVIDEND' | 'SPLIT'; label: string }>
   subIndicators?: Array<'macd' | 'kdj'>
   macd?: { dif: Array<number | null>; dea: Array<number | null>; hist: Array<number | null> } | null
   kdj?: { k: Array<number | null>; d: Array<number | null>; j: Array<number | null> } | null
@@ -256,6 +257,62 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     },
   ]
 
+  const dateToHigh = new Map<string, number>()
+  for (let i = 0; i < categories.length; i++) {
+    const h = candle[i]?.[3]
+    const d = categories[i]
+    if (typeof d === 'string' && typeof h === 'number') {
+      dateToHigh.set(d, h)
+    }
+  }
+  const markers = props.markers || []
+  const divPoints: any[] = []
+  const splitPoints: any[] = []
+  for (const m of markers) {
+    const y = dateToHigh.get(m.date)
+    if (y == null) continue
+    const item = {
+      name: m.label,
+      value: [m.date, y],
+      label: { show: true, formatter: m.type === 'DIVIDEND' ? 'D' : 'S', color: '#fff', fontSize: 10 },
+      tooltip: { valueFormatter: () => '' },
+    }
+    if (m.type === 'DIVIDEND') divPoints.push(item)
+    else splitPoints.push(item)
+  }
+  if (divPoints.length > 0) {
+    series.push({
+      name: 'Dividend',
+      type: 'scatter',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      symbol: 'pin',
+      symbolSize: 18,
+      itemStyle: { color: '#5b8ff9' },
+      data: divPoints,
+      z: 20,
+      tooltip: {
+        formatter: (p: any) => `分红：${p?.name || ''}<br/>日期：${p?.value?.[0] || ''}`,
+      },
+    })
+  }
+  if (splitPoints.length > 0) {
+    series.push({
+      name: 'Split',
+      type: 'scatter',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      symbol: 'diamond',
+      symbolSize: 14,
+      itemStyle: { color: '#f6bd16' },
+      data: splitPoints,
+      z: 20,
+      tooltip: {
+        formatter: (p: any) => `拆股：${p?.name || ''}<br/>日期：${p?.value?.[0] || ''}`,
+      },
+    })
+  }
+
   const maLines = props.maLines || {}
   const maColors: Record<string, string> = {
     '20': '#5b8ff9',
@@ -450,7 +507,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.bars, props.maLines, props.subIndicators, props.macd, props.kdj],
+  () => [props.bars, props.maLines, props.markers, props.subIndicators, props.macd, props.kdj],
   () => render(),
   { deep: true },
 )

@@ -385,6 +385,604 @@ public class MarketRepository {
         return out;
     }
 
+    public long requireProfileId(String profileKey) {
+        if (profileKey == null || profileKey.isBlank()) {
+            throw new IllegalArgumentException("Missing profile key");
+        }
+        String key = profileKey.trim();
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("key", key);
+        jdbc.update(
+                """
+                insert into market.profile (profile_key)
+                values (:key)
+                on conflict (profile_key) do nothing
+                """,
+                params
+        );
+        Long id = jdbc.queryForObject(
+                "select id from market.profile where profile_key = :key",
+                params,
+                Long.class
+        );
+        if (id == null) {
+            throw new IllegalStateException("Failed to resolve profile");
+        }
+        return id;
+    }
+
+    public long requireStockId(String canonicalSymbol) {
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("symbol", canonicalSymbol);
+        List<Long> ids = jdbc.query(
+                "select id from market.security where security_type = 'STOCK' and canonical_symbol = :symbol",
+                params,
+                (rs, rowNum) -> rs.getLong("id")
+        );
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("Stock not found: " + canonicalSymbol);
+        }
+        return ids.get(0);
+    }
+
+    public List<TradePlanDto> listTradePlans(String profileKey, String status) {
+        long profileId = requireProfileId(profileKey);
+        String st = status == null || status.isBlank() ? null : status.trim().toUpperCase(Locale.ROOT);
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("profileId", profileId)
+                .addValue("status", st);
+        record Row(
+                long id,
+                String symbol,
+                String name,
+                String direction,
+                String status,
+                LocalDate startDate,
+                BigDecimal entryPrice,
+                BigDecimal entryLow,
+                BigDecimal entryHigh,
+                BigDecimal stopPrice,
+                BigDecimal targetPrice,
+                String note,
+                LocalDate lastBarDate,
+                BigDecimal lastClose,
+                BigDecimal minLow,
+                BigDecimal maxHigh,
+                java.time.OffsetDateTime updatedAt
+        ) {}
+
+        List<Row> rows = jdbc.query(
+                """
+                select
+                    tp.id,
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    tp.direction,
+                    tp.status,
+                    tp.start_date,
+                    tp.entry_price,
+                    tp.entry_low,
+                    tp.entry_high,
+                    tp.stop_price,
+                    tp.target_price,
+                    tp.note,
+                    lb.bar_date as last_bar_date,
+                    lb.close as last_close,
+                    stats.min_low,
+                    stats.max_high,
+                    tp.updated_at
+                from market.trade_plan tp
+                join market.security s on s.id = tp.security_id
+                left join lateral (
+                    select bar_date, close
+                    from market.price_bar
+                    where security_id = tp.security_id and interval = '1d'
+                    order by bar_date desc
+                    limit 1
+                ) lb on true
+                left join lateral (
+                    select min(low) as min_low, max(high) as max_high
+                    from market.price_bar
+                    where security_id = tp.security_id
+                      and interval = '1d'
+                      and bar_date between tp.start_date and coalesce(lb.bar_date, tp.start_date)
+                ) stats on true
+                where tp.profile_id = :profileId
+                  and (:status is null or tp.status = :status)
+                order by tp.updated_at desc
+                """,
+                params,
+                (rs, rowNum) -> new Row(
+                        rs.getLong("id"),
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("direction"),
+                        rs.getString("status"),
+                        rs.getObject("start_date", LocalDate.class),
+                        rs.getBigDecimal("entry_price"),
+                        rs.getBigDecimal("entry_low"),
+                        rs.getBigDecimal("entry_high"),
+                        rs.getBigDecimal("stop_price"),
+                        rs.getBigDecimal("target_price"),
+                        rs.getString("note"),
+                        rs.getObject("last_bar_date", LocalDate.class),
+                        rs.getBigDecimal("last_close"),
+                        rs.getBigDecimal("min_low"),
+                        rs.getBigDecimal("max_high"),
+                        rs.getObject("updated_at", java.time.OffsetDateTime.class)
+                )
+        );
+
+        return rows.stream().map(r -> {
+            Double entry = r.entryPrice() == null ? null : r.entryPrice().doubleValue();
+            Double last = r.lastClose() == null ? null : r.lastClose().doubleValue();
+            Double pnlPct = null;
+            if (entry != null && entry != 0 && last != null) {
+                if ("SHORT".equalsIgnoreCase(r.direction())) {
+                    pnlPct = (entry / last) - 1.0;
+                } else {
+                    pnlPct = (last / entry) - 1.0;
+                }
+            }
+
+            Boolean hitStop = null;
+            Boolean hitTarget = null;
+            if (entry != null && entry != 0) {
+                if ("SHORT".equalsIgnoreCase(r.direction())) {
+                    if (r.stopPrice() != null && r.maxHigh() != null) {
+                        hitStop = r.maxHigh().compareTo(r.stopPrice()) >= 0;
+                    }
+                    if (r.targetPrice() != null && r.minLow() != null) {
+                        hitTarget = r.minLow().compareTo(r.targetPrice()) <= 0;
+                    }
+                } else {
+                    if (r.stopPrice() != null && r.minLow() != null) {
+                        hitStop = r.minLow().compareTo(r.stopPrice()) <= 0;
+                    }
+                    if (r.targetPrice() != null && r.maxHigh() != null) {
+                        hitTarget = r.maxHigh().compareTo(r.targetPrice()) >= 0;
+                    }
+                }
+            }
+
+            return new TradePlanDto(
+                    r.id(),
+                    r.symbol(),
+                    r.name(),
+                    r.direction(),
+                    r.status(),
+                    r.startDate(),
+                    entry,
+                    r.entryLow() == null ? null : r.entryLow().doubleValue(),
+                    r.entryHigh() == null ? null : r.entryHigh().doubleValue(),
+                    r.stopPrice() == null ? null : r.stopPrice().doubleValue(),
+                    r.targetPrice() == null ? null : r.targetPrice().doubleValue(),
+                    r.note(),
+                    r.lastBarDate(),
+                    last,
+                    pnlPct,
+                    hitStop,
+                    hitTarget,
+                    r.updatedAt()
+            );
+        }).toList();
+    }
+
+    public TradePlanDto createTradePlan(String profileKey, CreateTradePlanRequestDto req) {
+        if (req == null) throw new IllegalArgumentException("Request is required");
+        long profileId = requireProfileId(profileKey);
+        String symbol = req.symbol() == null ? null : req.symbol().trim().toUpperCase(Locale.ROOT);
+        if (symbol == null || symbol.isBlank()) throw new IllegalArgumentException("symbol is required");
+        long stockId = requireStockId(symbol);
+
+        String direction = req.direction() == null || req.direction().isBlank() ? "LONG" : req.direction().trim().toUpperCase(Locale.ROOT);
+        if (!direction.equals("LONG") && !direction.equals("SHORT")) {
+            throw new IllegalArgumentException("Invalid direction: " + direction);
+        }
+        String status = req.status() == null || req.status().isBlank() ? "PLANNED" : req.status().trim().toUpperCase(Locale.ROOT);
+        if (!List.of("PLANNED", "OPEN", "CLOSED", "CANCELLED").contains(status)) {
+            throw new IllegalArgumentException("Invalid status: " + status);
+        }
+        LocalDate startDate = req.startDate() == null ? LocalDate.now() : req.startDate();
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("profileId", profileId)
+                .addValue("securityId", stockId)
+                .addValue("direction", direction)
+                .addValue("status", status)
+                .addValue("startDate", startDate)
+                .addValue("entryPrice", req.entryPrice())
+                .addValue("entryLow", req.entryLow())
+                .addValue("entryHigh", req.entryHigh())
+                .addValue("stopPrice", req.stopPrice())
+                .addValue("targetPrice", req.targetPrice())
+                .addValue("note", req.note());
+
+        Long id = jdbc.queryForObject(
+                """
+                insert into market.trade_plan (
+                    profile_id, security_id, direction, status, start_date,
+                    entry_price, entry_low, entry_high, stop_price, target_price, note
+                )
+                values (
+                    :profileId, :securityId, :direction, :status, :startDate,
+                    :entryPrice, :entryLow, :entryHigh, :stopPrice, :targetPrice, :note
+                )
+                returning id
+                """,
+                params,
+                Long.class
+        );
+        if (id == null) throw new IllegalStateException("Failed to create plan");
+        return listTradePlans(profileKey, null).stream().filter(p -> p.id() == id).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load created plan"));
+    }
+
+    public TradePlanDto updateTradePlan(String profileKey, long id, UpdateTradePlanRequestDto req) {
+        if (req == null) throw new IllegalArgumentException("Request is required");
+        long profileId = requireProfileId(profileKey);
+        String direction = req.direction() == null ? null : req.direction().trim().toUpperCase(Locale.ROOT);
+        if (direction != null && !direction.isBlank() && !direction.equals("LONG") && !direction.equals("SHORT")) {
+            throw new IllegalArgumentException("Invalid direction: " + direction);
+        }
+        String status = req.status() == null ? null : req.status().trim().toUpperCase(Locale.ROOT);
+        if (status != null && !status.isBlank() && !List.of("PLANNED", "OPEN", "CLOSED", "CANCELLED").contains(status)) {
+            throw new IllegalArgumentException("Invalid status: " + status);
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("id", id)
+                .addValue("profileId", profileId)
+                .addValue("direction", direction == null || direction.isBlank() ? null : direction)
+                .addValue("status", status == null || status.isBlank() ? null : status)
+                .addValue("startDate", req.startDate())
+                .addValue("entryPrice", req.entryPrice())
+                .addValue("entryLow", req.entryLow())
+                .addValue("entryHigh", req.entryHigh())
+                .addValue("stopPrice", req.stopPrice())
+                .addValue("targetPrice", req.targetPrice())
+                .addValue("note", req.note());
+
+        int updated = jdbc.update(
+                """
+                update market.trade_plan
+                set
+                    direction = coalesce(:direction, direction),
+                    status = coalesce(:status, status),
+                    start_date = coalesce(:startDate, start_date),
+                    entry_price = coalesce(:entryPrice, entry_price),
+                    entry_low = coalesce(:entryLow, entry_low),
+                    entry_high = coalesce(:entryHigh, entry_high),
+                    stop_price = coalesce(:stopPrice, stop_price),
+                    target_price = coalesce(:targetPrice, target_price),
+                    note = coalesce(:note, note),
+                    updated_at = now()
+                where id = :id and profile_id = :profileId
+                """,
+                params
+        );
+        if (updated == 0) throw new IllegalArgumentException("Plan not found: " + id);
+        return listTradePlans(profileKey, null).stream().filter(p -> p.id() == id).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load updated plan"));
+    }
+
+    public void deleteTradePlan(String profileKey, long id) {
+        long profileId = requireProfileId(profileKey);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("id", id).addValue("profileId", profileId);
+        int deleted = jdbc.update("delete from market.trade_plan where id = :id and profile_id = :profileId", params);
+        if (deleted == 0) throw new IllegalArgumentException("Plan not found: " + id);
+    }
+
+    public List<AlertRuleDto> listAlertRules(String profileKey) {
+        long profileId = requireProfileId(profileKey);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("profileId", profileId);
+        return jdbc.query(
+                """
+                select
+                    r.id,
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    r.rule_type,
+                    r.enabled,
+                    r.price_level,
+                    r.price_direction,
+                    r.ma_period,
+                    r.ma_direction,
+                    r.volume_multiple,
+                    r.last_triggered_date,
+                    r.updated_at
+                from market.alert_rule r
+                join market.security s on s.id = r.security_id
+                where r.profile_id = :profileId
+                order by r.updated_at desc
+                """,
+                params,
+                (rs, rowNum) -> new AlertRuleDto(
+                        rs.getLong("id"),
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("rule_type"),
+                        rs.getBoolean("enabled"),
+                        rs.getBigDecimal("price_level") == null ? null : rs.getBigDecimal("price_level").doubleValue(),
+                        rs.getString("price_direction"),
+                        rs.getObject("ma_period", Integer.class),
+                        rs.getString("ma_direction"),
+                        rs.getBigDecimal("volume_multiple") == null ? null : rs.getBigDecimal("volume_multiple").doubleValue(),
+                        rs.getObject("last_triggered_date", LocalDate.class),
+                        rs.getObject("updated_at", java.time.OffsetDateTime.class)
+                )
+        );
+    }
+
+    public AlertRuleDto createAlertRule(String profileKey, CreateAlertRuleRequestDto req) {
+        if (req == null) throw new IllegalArgumentException("Request is required");
+        long profileId = requireProfileId(profileKey);
+        String symbol = req.symbol() == null ? null : req.symbol().trim().toUpperCase(Locale.ROOT);
+        if (symbol == null || symbol.isBlank()) throw new IllegalArgumentException("symbol is required");
+        long stockId = requireStockId(symbol);
+        String type = req.ruleType() == null ? "" : req.ruleType().trim().toUpperCase(Locale.ROOT);
+        if (!List.of("PRICE_BREAKOUT", "MA_CROSS", "VOLUME_SURGE").contains(type)) {
+            throw new IllegalArgumentException("Invalid ruleType: " + type);
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("profileId", profileId)
+                .addValue("securityId", stockId)
+                .addValue("type", type)
+                .addValue("enabled", req.enabled())
+                .addValue("priceLevel", req.priceLevel())
+                .addValue("priceDirection", req.priceDirection())
+                .addValue("maPeriod", req.maPeriod())
+                .addValue("maDirection", req.maDirection())
+                .addValue("volumeMultiple", req.volumeMultiple());
+
+        Long id = jdbc.queryForObject(
+                """
+                insert into market.alert_rule (
+                    profile_id, security_id, rule_type, enabled,
+                    price_level, price_direction,
+                    ma_period, ma_direction,
+                    volume_multiple
+                )
+                values (
+                    :profileId, :securityId, :type, :enabled,
+                    :priceLevel, :priceDirection,
+                    :maPeriod, :maDirection,
+                    :volumeMultiple
+                )
+                returning id
+                """,
+                params,
+                Long.class
+        );
+        if (id == null) throw new IllegalStateException("Failed to create rule");
+        return listAlertRules(profileKey).stream().filter(r -> r.id() == id).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load created rule"));
+    }
+
+    public AlertRuleDto updateAlertRule(String profileKey, long id, UpdateAlertRuleRequestDto req) {
+        if (req == null) throw new IllegalArgumentException("Request is required");
+        long profileId = requireProfileId(profileKey);
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("id", id)
+                .addValue("profileId", profileId)
+                .addValue("enabled", req.enabled())
+                .addValue("priceLevel", req.priceLevel())
+                .addValue("priceDirection", req.priceDirection())
+                .addValue("maPeriod", req.maPeriod())
+                .addValue("maDirection", req.maDirection())
+                .addValue("volumeMultiple", req.volumeMultiple());
+
+        int updated = jdbc.update(
+                """
+                update market.alert_rule
+                set
+                    enabled = :enabled,
+                    price_level = coalesce(:priceLevel, price_level),
+                    price_direction = coalesce(:priceDirection, price_direction),
+                    ma_period = coalesce(:maPeriod, ma_period),
+                    ma_direction = coalesce(:maDirection, ma_direction),
+                    volume_multiple = coalesce(:volumeMultiple, volume_multiple),
+                    updated_at = now()
+                where id = :id and profile_id = :profileId
+                """,
+                params
+        );
+        if (updated == 0) throw new IllegalArgumentException("Alert rule not found: " + id);
+        return listAlertRules(profileKey).stream().filter(r -> r.id() == id).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load updated rule"));
+    }
+
+    public void deleteAlertRule(String profileKey, long id) {
+        long profileId = requireProfileId(profileKey);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("id", id).addValue("profileId", profileId);
+        int deleted = jdbc.update("delete from market.alert_rule where id = :id and profile_id = :profileId", params);
+        if (deleted == 0) throw new IllegalArgumentException("Alert rule not found: " + id);
+    }
+
+    public List<AlertEventDto> listAlertEvents(String profileKey, int limit) {
+        long profileId = requireProfileId(profileKey);
+        int lim = Math.min(Math.max(limit, 1), 200);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("profileId", profileId).addValue("limit", lim);
+        return jdbc.query(
+                """
+                select
+                    e.id,
+                    r.id as rule_id,
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    e.bar_date,
+                    e.message,
+                    e.created_at
+                from market.alert_event e
+                join market.alert_rule r on r.id = e.alert_rule_id
+                join market.security s on s.id = r.security_id
+                where r.profile_id = :profileId
+                order by e.created_at desc
+                limit :limit
+                """,
+                params,
+                (rs, rowNum) -> new AlertEventDto(
+                        rs.getLong("id"),
+                        rs.getLong("rule_id"),
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getObject("bar_date", LocalDate.class),
+                        rs.getString("message"),
+                        rs.getObject("created_at", java.time.OffsetDateTime.class)
+                )
+        );
+    }
+
+    private record LatestAlertMetrics(
+            LocalDate barDate,
+            BigDecimal close,
+            BigDecimal prevClose,
+            BigDecimal ma20,
+            BigDecimal prevMa20,
+            BigDecimal ma50,
+            BigDecimal prevMa50,
+            BigDecimal ma200,
+            BigDecimal prevMa200,
+            Long volume,
+            BigDecimal vma50
+    ) {}
+
+    private LatestAlertMetrics getLatestAlertMetrics(long securityId) {
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("securityId", securityId);
+        return jdbc.query(
+                """
+                with base as (
+                    select
+                        bar_date,
+                        close,
+                        volume,
+                        lag(close) over(order by bar_date) as prev_close,
+                        avg(close) over(order by bar_date rows between 19 preceding and current row) as ma20,
+                        avg(close) over(order by bar_date rows between 49 preceding and current row) as ma50,
+                        avg(close) over(order by bar_date rows between 199 preceding and current row) as ma200,
+                        avg(volume) over(order by bar_date rows between 49 preceding and current row) as vma50
+                    from market.price_bar
+                    where security_id = :securityId and interval = '1d'
+                )
+                select
+                    bar_date,
+                    close,
+                    prev_close,
+                    ma20,
+                    lag(ma20) over(order by bar_date) as prev_ma20,
+                    ma50,
+                    lag(ma50) over(order by bar_date) as prev_ma50,
+                    ma200,
+                    lag(ma200) over(order by bar_date) as prev_ma200,
+                    volume,
+                    vma50
+                from base
+                order by bar_date desc
+                limit 1
+                """,
+                params,
+                rs -> {
+                    if (!rs.next()) return null;
+                    return new LatestAlertMetrics(
+                            rs.getObject("bar_date", LocalDate.class),
+                            rs.getBigDecimal("close"),
+                            rs.getBigDecimal("prev_close"),
+                            rs.getBigDecimal("ma20"),
+                            rs.getBigDecimal("prev_ma20"),
+                            rs.getBigDecimal("ma50"),
+                            rs.getBigDecimal("prev_ma50"),
+                            rs.getBigDecimal("ma200"),
+                            rs.getBigDecimal("prev_ma200"),
+                            rs.getObject("volume", Long.class),
+                            rs.getBigDecimal("vma50")
+                    );
+                }
+        );
+    }
+
+    public EvaluateAlertsResponseDto evaluateAlerts(String profileKey, int returnLatestLimit) {
+        requireProfileId(profileKey);
+        List<AlertRuleDto> rules = listAlertRules(profileKey).stream().filter(AlertRuleDto::enabled).toList();
+        int triggered = 0;
+        for (AlertRuleDto rule : rules) {
+            long securityId = requireStockId(rule.symbol());
+            LatestAlertMetrics m = getLatestAlertMetrics(securityId);
+            if (m == null || m.barDate() == null) continue;
+            if (rule.lastTriggeredDate() != null && rule.lastTriggeredDate().equals(m.barDate())) continue;
+
+            boolean fire = false;
+            String msg = null;
+            if ("PRICE_BREAKOUT".equals(rule.ruleType())) {
+                if (rule.priceLevel() != null && rule.priceDirection() != null && m.close() != null && m.prevClose() != null) {
+                    BigDecimal level = BigDecimal.valueOf(rule.priceLevel());
+                    if ("ABOVE".equalsIgnoreCase(rule.priceDirection())) {
+                        fire = m.prevClose().compareTo(level) <= 0 && m.close().compareTo(level) > 0;
+                        msg = "上破 " + level;
+                    } else if ("BELOW".equalsIgnoreCase(rule.priceDirection())) {
+                        fire = m.prevClose().compareTo(level) >= 0 && m.close().compareTo(level) < 0;
+                        msg = "下破 " + level;
+                    }
+                }
+            } else if ("MA_CROSS".equals(rule.ruleType())) {
+                int period = rule.maPeriod() == null ? 50 : rule.maPeriod();
+                BigDecimal ma = switch (period) {
+                    case 20 -> m.ma20();
+                    case 200 -> m.ma200();
+                    default -> m.ma50();
+                };
+                BigDecimal prevMa = switch (period) {
+                    case 20 -> m.prevMa20();
+                    case 200 -> m.prevMa200();
+                    default -> m.prevMa50();
+                };
+                if (ma != null && prevMa != null && m.close() != null && m.prevClose() != null && rule.maDirection() != null) {
+                    if ("ABOVE".equalsIgnoreCase(rule.maDirection())) {
+                        fire = m.prevClose().compareTo(prevMa) <= 0 && m.close().compareTo(ma) > 0;
+                        msg = "上穿 MA" + period;
+                    } else if ("BELOW".equalsIgnoreCase(rule.maDirection())) {
+                        fire = m.prevClose().compareTo(prevMa) >= 0 && m.close().compareTo(ma) < 0;
+                        msg = "下穿 MA" + period;
+                    }
+                }
+            } else if ("VOLUME_SURGE".equals(rule.ruleType())) {
+                if (rule.volumeMultiple() != null && m.volume() != null && m.vma50() != null) {
+                    BigDecimal threshold = m.vma50().multiply(BigDecimal.valueOf(rule.volumeMultiple()));
+                    fire = BigDecimal.valueOf(m.volume()).compareTo(threshold) >= 0;
+                    msg = "放量 ≥ " + rule.volumeMultiple() + "x(50日均量)";
+                }
+            }
+
+            if (!fire || msg == null) continue;
+
+            MapSqlParameterSource params = new MapSqlParameterSource()
+                    .addValue("ruleId", rule.id())
+                    .addValue("barDate", m.barDate())
+                    .addValue("message", rule.symbol() + " " + msg);
+
+            int inserted = jdbc.update(
+                    """
+                    insert into market.alert_event (alert_rule_id, bar_date, message)
+                    values (:ruleId, :barDate, :message)
+                    on conflict (alert_rule_id, bar_date) do nothing
+                    """,
+                    params
+            );
+            if (inserted > 0) {
+                triggered += 1;
+                jdbc.update(
+                        """
+                        update market.alert_rule
+                        set last_triggered_date = :barDate, last_triggered_at = now(), updated_at = now()
+                        where id = :ruleId
+                        """,
+                        new MapSqlParameterSource().addValue("ruleId", rule.id()).addValue("barDate", m.barDate())
+                );
+            }
+        }
+
+        List<AlertEventDto> latest = listAlertEvents(profileKey, returnLatestLimit);
+        return new EvaluateAlertsResponseDto(triggered, latest);
+    }
+
     public List<String> listIndexConstituentSymbols(String indexSymbol) {
         requireIndexId(indexSymbol);
         LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
@@ -464,6 +1062,417 @@ public class MarketRepository {
                             .addValue("firstAdded", first)
             );
         }
+    }
+
+    public BreadthSnapshotDto getBreadthSnapshot(String indexSymbol, double volumeSurgeMultiple) {
+        requireIndexId(indexSymbol);
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+        if (asOf == null) {
+            return new BreadthSnapshotDto(indexSymbol, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("volumeMultiple", volumeSurgeMultiple);
+
+        record Counts(
+                String asOfDate,
+                int totalMembers,
+                int membersWithData,
+                int up,
+                int down,
+                int flat,
+                int aboveMa20,
+                int aboveMa50,
+                int aboveMa200,
+                int newHigh52w,
+                int newLow52w,
+                int volumeSurge
+        ) {}
+
+        Counts c = jdbc.query(
+                """
+                with idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                ),
+                as_of_bar as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d'
+                ),
+                bars as (
+                    select
+                        pb.security_id,
+                        pb.bar_date,
+                        pb.close,
+                        pb.volume,
+                        lag(pb.close) over(partition by pb.security_id order by pb.bar_date) as prev_close,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 19 preceding and current row) as ma20,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as ma50,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 199 preceding and current row) as ma200,
+                        max(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 251 preceding and current row) as high252,
+                        min(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 251 preceding and current row) as low252,
+                        avg(pb.volume) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as vma50
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join as_of_bar a on pb.bar_date <= a.bar_date
+                    where pb.interval = '1d'
+                      and pb.bar_date >= (select bar_date from as_of_bar) - interval '400 days'
+                ),
+                latest as (
+                    select distinct on (security_id)
+                        security_id,
+                        bar_date,
+                        close,
+                        volume,
+                        prev_close,
+                        ma20,
+                        ma50,
+                        ma200,
+                        high252,
+                        low252,
+                        vma50,
+                        (bar_date = (select bar_date from as_of_bar)) as has_today
+                    from bars
+                    order by security_id, bar_date desc
+                )
+                select
+                    (select to_char(bar_date, 'YYYY-MM-DD') from as_of_bar) as as_of_date,
+                    (select count(*) from members) as total_members,
+                    count(*) filter (where has_today) as members_with_data,
+                    count(*) filter (where has_today and prev_close is not null and close > prev_close) as up,
+                    count(*) filter (where has_today and prev_close is not null and close < prev_close) as down,
+                    count(*) filter (where has_today and prev_close is not null and close = prev_close) as flat,
+                    count(*) filter (where has_today and ma20 is not null and close > ma20) as above_ma20,
+                    count(*) filter (where has_today and ma50 is not null and close > ma50) as above_ma50,
+                    count(*) filter (where has_today and ma200 is not null and close > ma200) as above_ma200,
+                    count(*) filter (where has_today and high252 is not null and close >= high252) as new_high_52w,
+                    count(*) filter (where has_today and low252 is not null and close <= low252) as new_low_52w,
+                    count(*) filter (where has_today and vma50 is not null and volume is not null and volume >= vma50 * :volumeMultiple) as volume_surge
+                from latest
+                """,
+                params,
+                rs -> {
+                    if (!rs.next()) {
+                        return new Counts(null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                    }
+                    return new Counts(
+                            rs.getString("as_of_date"),
+                            rs.getInt("total_members"),
+                            rs.getInt("members_with_data"),
+                            rs.getInt("up"),
+                            rs.getInt("down"),
+                            rs.getInt("flat"),
+                            rs.getInt("above_ma20"),
+                            rs.getInt("above_ma50"),
+                            rs.getInt("above_ma200"),
+                            rs.getInt("new_high_52w"),
+                            rs.getInt("new_low_52w"),
+                            rs.getInt("volume_surge")
+                    );
+                }
+        );
+
+        return new BreadthSnapshotDto(
+                indexSymbol,
+                c.asOfDate(),
+                c.totalMembers(),
+                c.membersWithData(),
+                c.up(),
+                c.down(),
+                c.flat(),
+                c.aboveMa20(),
+                c.aboveMa50(),
+                c.aboveMa200(),
+                c.newHigh52w(),
+                c.newLow52w(),
+                c.volumeSurge()
+        );
+    }
+
+    public List<ScreenerItemDto> runScreener(String indexSymbol, String preset, int lookbackDays, int limit) {
+        requireIndexId(indexSymbol);
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+        if (asOf == null) {
+            return List.of();
+        }
+        boolean trend = preset == null || preset.isBlank() || preset.equalsIgnoreCase("trend");
+        boolean breakout = preset != null && preset.equalsIgnoreCase("breakout");
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("lookback", lookbackDays)
+                .addValue("limit", limit);
+
+        String whereExtra = "";
+        String orderBy = "order by return_pct desc nulls last";
+        if (breakout) {
+            whereExtra = "and close >= high252 and high252 is not null";
+            orderBy = "order by return_pct desc nulls last";
+        } else if (trend) {
+            whereExtra = "and ma50 is not null and close > ma50";
+            orderBy = "order by return_pct desc nulls last";
+        }
+
+        return jdbc.query(
+                """
+                with idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                ),
+                as_of_bar as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d'
+                ),
+                bars as (
+                    select
+                        pb.security_id,
+                        pb.bar_date,
+                        pb.close,
+                        pb.volume,
+                        lag(pb.close, :lookback) over(partition by pb.security_id order by pb.bar_date) as close_lb,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as ma50,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 199 preceding and current row) as ma200,
+                        max(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 251 preceding and current row) as high252
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join as_of_bar a on pb.bar_date <= a.bar_date
+                    where pb.interval = '1d'
+                      and pb.bar_date >= (select bar_date from as_of_bar) - interval '450 days'
+                ),
+                latest as (
+                    select distinct on (security_id)
+                        security_id,
+                        bar_date,
+                        close,
+                        volume,
+                        close_lb,
+                        ma50,
+                        ma200,
+                        high252
+                    from bars
+                    order by security_id, bar_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    to_char(l.bar_date, 'YYYY-MM-DD') as as_of_date,
+                    l.close as close,
+                    case when l.close_lb is null or l.close_lb = 0 then null else ((l.close / l.close_lb) - 1.0) end as return_pct,
+                    l.ma50 as ma50,
+                    l.ma200 as ma200,
+                    l.volume as volume
+                from latest l
+                join market.security s on s.id = l.security_id and s.security_type = 'STOCK'
+                where l.bar_date = (select bar_date from as_of_bar)
+                %s
+                %s
+                limit :limit
+                """.formatted(whereExtra, orderBy),
+                params,
+                (rs, rowNum) -> new ScreenerItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("as_of_date"),
+                        rs.getObject("close") == null ? null : rs.getBigDecimal("close").doubleValue(),
+                        rs.getObject("return_pct") == null ? null : rs.getBigDecimal("return_pct").doubleValue(),
+                        rs.getObject("ma50") == null ? null : rs.getBigDecimal("ma50").doubleValue(),
+                        rs.getObject("ma200") == null ? null : rs.getBigDecimal("ma200").doubleValue(),
+                        rs.getObject("volume") == null ? null : rs.getLong("volume")
+                )
+        );
+    }
+
+    public RsSeriesDto getRelativeStrengthSeries(String stockSymbol, String indexSymbol, LocalDate start, LocalDate end) {
+        if (stockSymbol == null || stockSymbol.isBlank()) {
+            throw new IllegalArgumentException("symbol is required");
+        }
+        requireIndexId(indexSymbol);
+        long stockId = findSecurityIdBySymbol(stockSymbol)
+                .orElseThrow(() -> new IllegalArgumentException("Security not found: " + stockSymbol));
+        long indexId = requireIndexId(indexSymbol);
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("stockId", stockId)
+                .addValue("indexId", indexId)
+                .addValue("start", start)
+                .addValue("end", end);
+
+        record Row(LocalDate date, Double stockClose, Double indexClose) {}
+
+        List<Row> rows = jdbc.query(
+                """
+                with s as (
+                    select bar_date, close
+                    from market.price_bar
+                    where security_id = :stockId and interval = '1d' and bar_date between :start and :end
+                ),
+                i as (
+                    select bar_date, close
+                    from market.price_bar
+                    where security_id = :indexId and interval = '1d' and bar_date between :start and :end
+                )
+                select s.bar_date as bar_date, s.close as stock_close, i.close as index_close
+                from s
+                join i on i.bar_date = s.bar_date
+                where s.close is not null and i.close is not null and i.close <> 0
+                order by s.bar_date
+                """,
+                params,
+                (rs, rowNum) -> new Row(
+                        rs.getObject("bar_date", LocalDate.class),
+                        rs.getObject("stock_close") == null ? null : rs.getBigDecimal("stock_close").doubleValue(),
+                        rs.getObject("index_close") == null ? null : rs.getBigDecimal("index_close").doubleValue()
+                )
+        );
+
+        if (rows.isEmpty()) {
+            return new RsSeriesDto(stockSymbol, indexSymbol, start.toString(), end.toString(), null, null, null, List.of());
+        }
+
+        double firstStock = rows.get(0).stockClose() == null ? 0 : rows.get(0).stockClose();
+        double firstIndex = rows.get(0).indexClose() == null ? 0 : rows.get(0).indexClose();
+        Double firstRs = firstIndex == 0 ? null : (firstStock / firstIndex);
+
+        Double lastStock = rows.get(rows.size() - 1).stockClose();
+        Double lastIndex = rows.get(rows.size() - 1).indexClose();
+        Double stockReturn = (firstStock != 0 && lastStock != null) ? (lastStock / firstStock - 1.0) : null;
+        Double indexReturn = (firstIndex != 0 && lastIndex != null) ? (lastIndex / firstIndex - 1.0) : null;
+        Double rsReturn = (stockReturn != null && indexReturn != null)
+                ? ((1.0 + stockReturn) / (1.0 + indexReturn) - 1.0)
+                : null;
+
+        List<RsPointDto> points = rows.stream().map(r -> {
+            Double rs = (r.indexClose() == null || r.indexClose() == 0 || r.stockClose() == null) ? null : (r.stockClose() / r.indexClose());
+            Double rsNorm = (rs != null && firstRs != null && firstRs != 0) ? (rs / firstRs) : null;
+            return new RsPointDto(
+                    r.date().toString(),
+                    r.stockClose(),
+                    r.indexClose(),
+                    rs,
+                    rsNorm
+            );
+        }).toList();
+
+        return new RsSeriesDto(stockSymbol, indexSymbol, start.toString(), end.toString(), stockReturn, indexReturn, rsReturn, points);
+    }
+
+    public List<RsRankItemDto> rankRelativeStrength(String indexSymbol, int lookbackDays, int limit, boolean requireAboveMa50) {
+        long indexId = requireIndexId(indexSymbol);
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+        if (asOf == null) {
+            return List.of();
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("indexId", indexId)
+                .addValue("asOf", asOf)
+                .addValue("lookback", lookbackDays)
+                .addValue("limit", limit)
+                .addValue("requireMa50", requireAboveMa50);
+
+        return jdbc.query(
+                """
+                with members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join market.security idx on idx.id = m.index_id and idx.canonical_symbol = :indexSymbol and idx.security_type = 'INDEX'
+                    where m.as_of_date = :asOf
+                ),
+                idx_bars as (
+                    select
+                        pb.bar_date,
+                        pb.close,
+                        lag(pb.close, :lookback) over(order by pb.bar_date) as close_lb
+                    from market.price_bar pb
+                    where pb.security_id = :indexId and pb.interval = '1d'
+                ),
+                idx_latest as (
+                    select max(bar_date) as bar_date
+                    from idx_bars
+                ),
+                idx_at as (
+                    select
+                        to_char(b.bar_date, 'YYYY-MM-DD') as as_of_date,
+                        b.close as idx_close,
+                        b.close_lb as idx_close_lb
+                    from idx_bars b
+                    join idx_latest l on l.bar_date = b.bar_date
+                    where b.close is not null and b.close_lb is not null and b.close_lb <> 0
+                ),
+                stock_bars as (
+                    select
+                        pb.security_id,
+                        pb.bar_date,
+                        pb.close,
+                        lag(pb.close, :lookback) over(partition by pb.security_id order by pb.bar_date) as close_lb,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as ma50
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d'
+                      and pb.bar_date >= (select bar_date from idx_latest) - interval '500 days'
+                ),
+                stock_at as (
+                    select distinct on (security_id)
+                        security_id,
+                        bar_date,
+                        close,
+                        close_lb,
+                        ma50
+                    from stock_bars
+                    where bar_date = (select bar_date from idx_latest)
+                    order by security_id, bar_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    (select as_of_date from idx_at) as as_of_date,
+                    case when sa.close_lb is null or sa.close_lb = 0 then null else (sa.close / sa.close_lb - 1.0) end as stock_return_pct,
+                    case when ia.idx_close_lb is null or ia.idx_close_lb = 0 then null else (ia.idx_close / ia.idx_close_lb - 1.0) end as index_return_pct,
+                    case
+                        when sa.close_lb is null or sa.close_lb = 0 or ia.idx_close_lb is null or ia.idx_close_lb = 0
+                        then null
+                        else ((sa.close / sa.close_lb) / (ia.idx_close / ia.idx_close_lb) - 1.0)
+                    end as rs_return_pct
+                from stock_at sa
+                join market.security s on s.id = sa.security_id and s.security_type = 'STOCK'
+                cross join idx_at ia
+                where sa.close is not null and sa.close_lb is not null and sa.close_lb <> 0
+                  and (:requireMa50 = false or (sa.ma50 is not null and sa.close > sa.ma50))
+                order by rs_return_pct desc nulls last
+                limit :limit
+                """,
+                params,
+                (rs, rowNum) -> new RsRankItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("as_of_date"),
+                        rs.getObject("stock_return_pct") == null ? null : rs.getBigDecimal("stock_return_pct").doubleValue(),
+                        rs.getObject("index_return_pct") == null ? null : rs.getBigDecimal("index_return_pct").doubleValue(),
+                        rs.getObject("rs_return_pct") == null ? null : rs.getBigDecimal("rs_return_pct").doubleValue()
+                )
+        );
     }
 
     public StockDetailDto getStockDetail(String canonicalSymbol, String lang) {
@@ -561,6 +1570,34 @@ public class MarketRepository {
                 select ex_date, action_type, cash_amount, currency, split_numerator, split_denominator, source
                 from market.corporate_action
                 where security_id = :securityId
+                order by ex_date desc
+                """,
+                params,
+                (rs, rowNum) -> new CorporateActionDto(
+                        rs.getObject("ex_date", LocalDate.class),
+                        rs.getString("action_type"),
+                        rs.getBigDecimal("cash_amount"),
+                        rs.getString("currency"),
+                        rs.getObject("split_numerator", Integer.class),
+                        rs.getObject("split_denominator", Integer.class),
+                        rs.getString("source")
+                )
+        );
+    }
+
+    public List<CorporateActionDto> listCorporateActionsBySymbol(String canonicalSymbol, LocalDate start, LocalDate end) {
+        long securityId = findSecurityIdBySymbol(canonicalSymbol)
+                .orElseThrow(() -> new IllegalArgumentException("Security not found: " + canonicalSymbol));
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("securityId", securityId)
+                .addValue("start", start)
+                .addValue("end", end);
+        return jdbc.query(
+                """
+                select ex_date, action_type, cash_amount, currency, split_numerator, split_denominator, source
+                from market.corporate_action
+                where security_id = :securityId
+                  and ex_date between :start and :end
                 order by ex_date desc
                 """,
                 params,

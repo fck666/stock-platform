@@ -100,8 +100,229 @@ export type IndexListItemDto = {
   wikiUrl: string | null
 }
 
+export type BreadthSnapshotDto = {
+  indexSymbol: string
+  asOfDate: string | null
+  totalMembers: number
+  membersWithData: number
+  up: number
+  down: number
+  flat: number
+  aboveMa20: number
+  aboveMa50: number
+  aboveMa200: number
+  newHigh52w: number
+  newLow52w: number
+  volumeSurge: number
+}
+
+export type ScreenerItemDto = {
+  symbol: string
+  name: string | null
+  asOfDate: string
+  close: number | null
+  returnPct: number | null
+  ma50: number | null
+  ma200: number | null
+  volume: number | null
+}
+
+export type RsPointDto = {
+  date: string
+  stockClose: number | null
+  indexClose: number | null
+  rs: number | null
+  rsNormalized: number | null
+}
+
+export type RsSeriesDto = {
+  symbol: string
+  indexSymbol: string
+  start: string
+  end: string
+  stockReturnPct: number | null
+  indexReturnPct: number | null
+  rsReturnPct: number | null
+  points: RsPointDto[]
+}
+
+export type RsRankItemDto = {
+  symbol: string
+  name: string | null
+  asOfDate: string
+  stockReturnPct: number | null
+  indexReturnPct: number | null
+  rsReturnPct: number | null
+}
+
+export type TradePlanDto = {
+  id: number
+  symbol: string
+  name: string | null
+  direction: 'LONG' | 'SHORT'
+  status: 'PLANNED' | 'OPEN' | 'CLOSED' | 'CANCELLED'
+  startDate: string
+  entryPrice: number | null
+  entryLow: number | null
+  entryHigh: number | null
+  stopPrice: number | null
+  targetPrice: number | null
+  note: string | null
+  lastBarDate: string | null
+  lastClose: number | null
+  pnlPct: number | null
+  hitStop: boolean | null
+  hitTarget: boolean | null
+  updatedAt: string
+}
+
+export type CreateTradePlanRequestDto = {
+  symbol: string
+  direction?: 'LONG' | 'SHORT'
+  status?: 'PLANNED' | 'OPEN' | 'CLOSED' | 'CANCELLED'
+  startDate?: string
+  entryPrice?: number
+  entryLow?: number
+  entryHigh?: number
+  stopPrice?: number
+  targetPrice?: number
+  note?: string
+}
+
+export type UpdateTradePlanRequestDto = {
+  direction?: 'LONG' | 'SHORT'
+  status?: 'PLANNED' | 'OPEN' | 'CLOSED' | 'CANCELLED'
+  startDate?: string
+  entryPrice?: number
+  entryLow?: number
+  entryHigh?: number
+  stopPrice?: number
+  targetPrice?: number
+  note?: string
+}
+
+export type AlertRuleDto = {
+  id: number
+  symbol: string
+  name: string | null
+  ruleType: 'PRICE_BREAKOUT' | 'MA_CROSS' | 'VOLUME_SURGE'
+  enabled: boolean
+  priceLevel: number | null
+  priceDirection: 'ABOVE' | 'BELOW' | null
+  maPeriod: 20 | 50 | 200 | null
+  maDirection: 'ABOVE' | 'BELOW' | null
+  volumeMultiple: number | null
+  lastTriggeredDate: string | null
+  updatedAt: string
+}
+
+export type CreateAlertRuleRequestDto = {
+  symbol: string
+  ruleType: 'PRICE_BREAKOUT' | 'MA_CROSS' | 'VOLUME_SURGE'
+  enabled?: boolean
+  priceLevel?: number
+  priceDirection?: 'ABOVE' | 'BELOW'
+  maPeriod?: 20 | 50 | 200
+  maDirection?: 'ABOVE' | 'BELOW'
+  volumeMultiple?: number
+}
+
+export type UpdateAlertRuleRequestDto = {
+  enabled: boolean
+  priceLevel?: number
+  priceDirection?: 'ABOVE' | 'BELOW'
+  maPeriod?: 20 | 50 | 200
+  maDirection?: 'ABOVE' | 'BELOW'
+  volumeMultiple?: number
+}
+
+export type AlertEventDto = {
+  id: number
+  ruleId: number
+  symbol: string
+  name: string | null
+  barDate: string
+  message: string
+  createdAt: string
+}
+
+export type EvaluateAlertsResponseDto = {
+  triggered: number
+  latestEvents: AlertEventDto[]
+}
+
 export async function listIndices() {
   const res = await http.get<IndexListItemDto[]>('/api/indices')
+  return res.data
+}
+
+export async function getBreadth(index: string) {
+  const res = await http.get<BreadthSnapshotDto>('/api/market/breadth', { params: { index } })
+  return res.data
+}
+
+export async function runScreener(params: { index: string; preset: string; lookbackDays: number; limit: number }) {
+  const res = await http.get<ScreenerItemDto[]>('/api/market/screener', { params })
+  return res.data
+}
+
+export async function getRelativeStrength(params: { symbol: string; index: string; start?: string; end?: string }) {
+  const res = await http.get<RsSeriesDto>('/api/market/rs', { params })
+  return res.data
+}
+
+export async function getRelativeStrengthRank(params: { index: string; lookbackDays: number; limit: number; requireAboveMa50?: boolean }) {
+  const res = await http.get<RsRankItemDto[]>('/api/market/rs/rank', { params })
+  return res.data
+}
+
+export async function listTradePlans(params?: { status?: string }) {
+  const res = await http.get<TradePlanDto[]>('/api/plans', { params })
+  return res.data
+}
+
+export async function createTradePlan(body: CreateTradePlanRequestDto) {
+  const res = await http.post<TradePlanDto>('/api/plans', body)
+  return res.data
+}
+
+export async function updateTradePlan(id: number, body: UpdateTradePlanRequestDto) {
+  const res = await http.put<TradePlanDto>(`/api/plans/${id}`, body)
+  return res.data
+}
+
+export async function deleteTradePlan(id: number) {
+  const res = await http.delete<void>(`/api/plans/${id}`)
+  return res.data
+}
+
+export async function listAlertRules() {
+  const res = await http.get<AlertRuleDto[]>('/api/alerts/rules')
+  return res.data
+}
+
+export async function createAlertRule(body: CreateAlertRuleRequestDto) {
+  const res = await http.post<AlertRuleDto>('/api/alerts/rules', body)
+  return res.data
+}
+
+export async function updateAlertRule(id: number, body: UpdateAlertRuleRequestDto) {
+  const res = await http.put<AlertRuleDto>(`/api/alerts/rules/${id}`, body)
+  return res.data
+}
+
+export async function deleteAlertRule(id: number) {
+  const res = await http.delete<void>(`/api/alerts/rules/${id}`)
+  return res.data
+}
+
+export async function listAlertEvents(params?: { limit?: number }) {
+  const res = await http.get<AlertEventDto[]>('/api/alerts/events', { params })
+  return res.data
+}
+
+export async function evaluateAlerts(params?: { latestLimit?: number }) {
+  const res = await http.post<EvaluateAlertsResponseDto>('/api/alerts/evaluate', null, { params })
   return res.data
 }
 

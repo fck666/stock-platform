@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
-import { getStockBars, getStockDetail, getStockIndicators, syncStock, type BarDto, type IndicatorsResponseDto, type StockDetailDto } from '../api/market'
+import LineChart from '../components/LineChart.vue'
+import { getRelativeStrength, listIndices, getStockBars, getStockDetail, getStockIndicators, syncStock, type BarDto, type IndicatorsResponseDto, type StockDetailDto, type IndexListItemDto, type RsSeriesDto } from '../api/market'
 
 const route = useRoute()
 
@@ -15,6 +16,10 @@ const detail = ref<StockDetailDto | null>(null)
 const bars = ref<BarDto[]>([])
 const indicators = ref<IndicatorsResponseDto | null>(null)
 const indicatorLoading = ref(false)
+const rsLoading = ref(false)
+const rsSeries = ref<RsSeriesDto | null>(null)
+const rsIndex = ref('^SPX')
+const indices = ref<IndexListItemDto[]>([])
 
 const intervalLabel = computed(() => {
   if (interval.value === '1w') return '周K'
@@ -108,6 +113,7 @@ async function loadAll() {
       end: end.value || undefined,
     })
     await loadIndicators()
+    await loadRelativeStrength()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
   } finally {
@@ -239,6 +245,53 @@ const kdjSeries = computed(() => {
     }),
   }
 })
+async function loadIndices() {
+  try {
+    indices.value = await listIndices()
+    if (indices.value.length > 0 && !indices.value.find(i => i.symbol === rsIndex.value)) {
+      rsIndex.value = indices.value[0]?.symbol || '^SPX'
+    }
+  } catch {}
+}
+
+async function loadRelativeStrength() {
+  if (!symbol.value) return
+  rsLoading.value = true
+  try {
+    rsSeries.value = await getRelativeStrength({
+      symbol: symbol.value,
+      index: rsIndex.value,
+      start: start.value || undefined,
+      end: end.value || undefined,
+    })
+  } catch (e: any) {
+    rsSeries.value = null
+  } finally {
+    rsLoading.value = false
+  }
+}
+
+const rsDates = computed(() => rsSeries.value?.points?.map(p => p.date) || [])
+const rsNorm = computed(() => rsSeries.value?.points?.map(p => (p.rsNormalized == null ? null : Number(p.rsNormalized))) || [])
+
+const chartMarkers = computed(() => {
+  const actions = detail.value?.corporateActions || []
+  const markers: Array<{ date: string; type: 'DIVIDEND' | 'SPLIT'; label: string }> = []
+  for (const a of actions) {
+    const t = String(a.actionType || '')
+    if (t !== 'DIVIDEND' && t !== 'SPLIT') continue
+    const d = String(a.exDate || '').trim()
+    if (!d) continue
+    let label = ''
+    if (t === 'DIVIDEND') {
+      label = a.cashAmount != null ? `${a.cashAmount}${a.currency ? ' ' + a.currency : ''}` : 'DIV'
+    } else {
+      label = a.splitNumerator && a.splitDenominator ? `${a.splitNumerator}:${a.splitDenominator}` : 'SPL'
+    }
+    markers.push({ date: d, type: t as any, label })
+  }
+  return markers
+})
 
 async function triggerSync() {
   syncing.value = true
@@ -253,6 +306,7 @@ async function triggerSync() {
 }
 
 onMounted(() => {
+  loadIndices()
   loadIndicatorConfig()
   setDefaultRange()
   updateChartHeight()
@@ -266,6 +320,7 @@ onBeforeUnmount(() => {
 
 watch(symbol, () => loadAll())
 watch(interval, () => loadAll())
+watch(rsIndex, () => loadRelativeStrength())
 </script>
 
 <template>
@@ -327,6 +382,7 @@ watch(interval, () => loadAll())
               :title="title"
               :height="chartHeight"
               :ma-lines="maLines"
+              :markers="chartMarkers"
               :sub-indicators="selectedSubIndicators"
               :macd="macdSeries"
               :kdj="kdjSeries"
@@ -335,6 +391,31 @@ watch(interval, () => loadAll())
         </el-card>
       </el-col>
       <el-col :xs="24" :md="10">
+        <el-card shadow="never" style="border-radius: 12px; margin-bottom: 16px" v-loading="rsLoading">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+            <div style="font-weight: 700">相对强弱 (RS)</div>
+            <el-space wrap>
+              <el-select v-model="rsIndex" size="small" style="width: 180px">
+                <el-option v-for="idx in indices" :key="idx.symbol" :label="idx.name || idx.symbol" :value="idx.symbol" />
+              </el-select>
+              <el-button size="small" @click="loadRelativeStrength" :loading="rsLoading">刷新</el-button>
+            </el-space>
+          </div>
+          <div style="color: #667085; font-size: 12px; margin-top: 6px">
+            RS 相对收益：{{ rsSeries?.rsReturnPct == null ? '-' : (rsSeries.rsReturnPct * 100).toFixed(2) + '%' }}
+            （股票 {{ rsSeries?.stockReturnPct == null ? '-' : (rsSeries.stockReturnPct * 100).toFixed(2) + '%' }}，
+            指数 {{ rsSeries?.indexReturnPct == null ? '-' : (rsSeries.indexReturnPct * 100).toFixed(2) + '%' }}）
+          </div>
+          <div style="margin-top: 12px">
+            <LineChart
+              :title="`RS（归一化） vs ${rsIndex}`"
+              :dates="rsDates"
+              :series="[{ name: 'RS', data: rsNorm, color: '#5b8ff9' }]"
+              :height="220"
+            />
+          </div>
+        </el-card>
+
         <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="代码">{{ detail?.symbol || symbol }}</el-descriptions-item>

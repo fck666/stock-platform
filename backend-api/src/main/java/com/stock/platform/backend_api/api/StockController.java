@@ -1,6 +1,7 @@
 package com.stock.platform.backend_api.api;
 
 import com.stock.platform.backend_api.api.dto.BarDto;
+import com.stock.platform.backend_api.api.dto.CorporateActionDto;
 import com.stock.platform.backend_api.api.dto.IndicatorsResponseDto;
 import com.stock.platform.backend_api.api.dto.PagedResponse;
 import com.stock.platform.backend_api.api.dto.StockDetailDto;
@@ -82,6 +83,20 @@ public class StockController {
         boolean macd = inc.contains("macd");
         boolean kdj = inc.contains("kdj");
         return indicatorsService.getIndicators(symbol.toUpperCase(), interval, start, end, maPeriods, macd, kdj);
+    }
+
+    @GetMapping("/{symbol}/corporate-actions")
+    public List<CorporateActionDto> getCorporateActions(
+            @PathVariable String symbol,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end
+    ) {
+        LocalDate effectiveEnd = end != null ? end : LocalDate.now().minusDays(1);
+        LocalDate effectiveStart = start != null ? start : effectiveEnd.minusYears(2);
+        if (effectiveStart.isAfter(effectiveEnd)) {
+            throw new IllegalArgumentException("start must be <= end");
+        }
+        return marketRepository.listCorporateActionsBySymbol(symbol.toUpperCase(), effectiveStart, effectiveEnd);
     }
 
     private static List<Integer> parseIntCsv(String csv) {

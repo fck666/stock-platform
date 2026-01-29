@@ -6,8 +6,11 @@ const route = useRoute()
 const router = useRouter()
 
 const active = computed(() => {
+  if (route.path.startsWith('/market')) return '/market'
   if (route.path.startsWith('/stocks')) return '/stocks'
   if (route.path.startsWith('/indices')) return '/indices'
+  if (route.path.startsWith('/plans')) return '/plans'
+  if (route.path.startsWith('/alerts')) return '/alerts'
   if (route.path.startsWith('/analysis')) return '/analysis'
   if (route.path.startsWith('/sync')) return '/sync'
   return '/'
@@ -24,8 +27,11 @@ function handleSelect(index: string) {
       <div style="font-weight: 700; font-size: 16px">Stock Platform</div>
       <el-menu mode="horizontal" :default-active="active" @select="handleSelect" style="flex: 1">
         <el-menu-item index="/">首页</el-menu-item>
+        <el-menu-item index="/market">市场</el-menu-item>
         <el-menu-item index="/stocks">股票列表</el-menu-item>
         <el-menu-item index="/indices">指数管理</el-menu-item>
+        <el-menu-item index="/plans">交易计划</el-menu-item>
+        <el-menu-item index="/alerts">告警</el-menu-item>
         <el-menu-item index="/analysis">股票分析</el-menu-item>
         <el-menu-item index="/sync">数据同步</el-menu-item>
       </el-menu>
