@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE SCHEMA IF NOT EXISTS market;
 
 CREATE TABLE IF NOT EXISTS market.security (
@@ -176,3 +178,74 @@ CREATE TABLE IF NOT EXISTS market.alert_event (
 
 CREATE INDEX IF NOT EXISTS idx_alert_event_rule_created
     ON market.alert_event (alert_rule_id, created_at DESC);
+
+CREATE SCHEMA IF NOT EXISTS iam;
+
+CREATE TABLE IF NOT EXISTS iam.users (
+    id uuid primary key default gen_random_uuid(),
+    username text not null unique,
+    status text not null default 'active',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+CREATE TABLE IF NOT EXISTS iam.identities (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references iam.users (id) on delete cascade,
+    provider text not null,
+    provider_uid text not null,
+    password_hash text,
+    created_at timestamptz not null default now(),
+    unique (provider, provider_uid)
+);
+
+CREATE TABLE IF NOT EXISTS iam.roles (
+    id uuid primary key default gen_random_uuid(),
+    code text not null unique,
+    name text not null,
+    created_at timestamptz not null default now()
+);
+
+CREATE TABLE IF NOT EXISTS iam.permissions (
+    id uuid primary key default gen_random_uuid(),
+    code text not null unique,
+    name text not null,
+    created_at timestamptz not null default now()
+);
+
+CREATE TABLE IF NOT EXISTS iam.user_roles (
+    user_id uuid not null references iam.users (id) on delete cascade,
+    role_id uuid not null references iam.roles (id) on delete cascade,
+    created_at timestamptz not null default now(),
+    primary key (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS iam.role_permissions (
+    role_id uuid not null references iam.roles (id) on delete cascade,
+    permission_id uuid not null references iam.permissions (id) on delete cascade,
+    created_at timestamptz not null default now(),
+    primary key (role_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS iam.refresh_tokens (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references iam.users (id) on delete cascade,
+    token_hash text not null unique,
+    expires_at timestamptz not null,
+    revoked_at timestamptz,
+    created_at timestamptz not null default now()
+);
+
+INSERT INTO iam.roles (code, name) VALUES ('admin', '管理员') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.roles (code, name) VALUES ('user', '普通用户') ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO iam.permissions (code, name) VALUES ('data.sync.execute', '执行数据同步') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.permissions (code, name) VALUES ('admin.stock.write', '管理股票') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.permissions (code, name) VALUES ('admin.index.write', '管理指数') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.permissions (code, name) VALUES ('iam.manage', '管理账号与权限') ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO iam.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM iam.roles r, iam.permissions p
+WHERE r.code = 'admin' AND p.code IN ('data.sync.execute', 'admin.stock.write', 'admin.index.write', 'iam.manage')
+ON CONFLICT DO NOTHING;

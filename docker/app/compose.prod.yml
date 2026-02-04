@@ -13,6 +13,10 @@ services:
       DATA_COLLECTOR_ENABLED: ${DATA_COLLECTOR_ENABLED:-true}
       DATA_COLLECTOR_WORKING_DIR: ${DATA_COLLECTOR_WORKING_DIR:-/opt/data-collector}
       DATA_COLLECTOR_PYTHON_PATH: ${DATA_COLLECTOR_PYTHON_PATH:-/opt/data-collector/venv/bin/python}
+      SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET:-}
+      INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:-}
+      INIT_ADMIN_FORCE_RESET_PASSWORD: ${INIT_ADMIN_FORCE_RESET_PASSWORD:-false}
       TZ: ${TZ:-Asia/Shanghai}
     networks:
       - stock_platform_net
@@ -33,4 +37,3 @@ networks:
   stock_platform_net:
     external: true
     name: stock-platform-net
-

@@ -3,6 +3,7 @@ package com.stock.platform.backend_api.api;
 import com.stock.platform.backend_api.api.dto.CreateStockRequestDto;
 import com.stock.platform.backend_api.repository.MarketRepository;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -13,6 +14,7 @@ import java.util.Set;
 
 @RestController
 @RequestMapping("/api/admin/stocks")
+@PreAuthorize("hasAuthority('admin.stock.write')")
 public class StockAdminController {
     private final MarketRepository market;
 
@@ -93,4 +95,3 @@ public class StockAdminController {
         return s;
     }
 }
-

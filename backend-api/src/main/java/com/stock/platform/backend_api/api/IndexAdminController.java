@@ -5,6 +5,7 @@ import com.stock.platform.backend_api.api.dto.IndexListItemDto;
 import com.stock.platform.backend_api.api.dto.UpdateIndexConstituentsRequestDto;
 import com.stock.platform.backend_api.repository.MarketRepository;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ public class IndexAdminController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('admin.index.write')")
     public IndexListItemDto createIndex(@Valid @RequestBody CreateIndexRequestDto req) {
         String symbol = normalizeIndexSymbol(req.symbol());
         String name = normalizeOptional(req.name());
@@ -44,6 +46,7 @@ public class IndexAdminController {
     }
 
     @PutMapping("/{symbol}/constituents")
+    @PreAuthorize("hasAuthority('admin.index.write')")
     public void replaceConstituents(@PathVariable("symbol") String symbol, @Valid @RequestBody UpdateIndexConstituentsRequestDto req) {
         String idx = normalizeIndexSymbol(symbol);
         List<String> members = req.stockSymbols().stream().map(IndexAdminController::normalizeStockSymbol).distinct().toList();
@@ -83,4 +86,3 @@ public class IndexAdminController {
         return s;
     }
 }
-

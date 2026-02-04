@@ -18,3 +18,13 @@ app:
     enabled: ${DATA_COLLECTOR_ENABLED:false}
     working-dir: ${DATA_COLLECTOR_WORKING_DIR:}
     python-path: ${DATA_COLLECTOR_PYTHON_PATH:}
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:}
+    access-token-ttl-seconds: ${SECURITY_JWT_ACCESS_TTL_SECONDS:1800}
+    refresh-token-ttl-seconds: ${SECURITY_JWT_REFRESH_TTL_SECONDS:2592000}
+  init-admin:
+    username: ${INIT_ADMIN_USERNAME:}
+    password: ${INIT_ADMIN_PASSWORD:}
+    force-reset-password: ${INIT_ADMIN_FORCE_RESET_PASSWORD:false}

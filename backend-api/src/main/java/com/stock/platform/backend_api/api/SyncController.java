@@ -4,6 +4,7 @@ import com.stock.platform.backend_api.api.dto.SyncJobDto;
 import com.stock.platform.backend_api.api.dto.SyncStocksRequest;
 import com.stock.platform.backend_api.service.DataCollectorService;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +18,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/sync")
+@PreAuthorize("hasAuthority('data.sync.execute')")
 public class SyncController {
     private static final LocalDate DEFAULT_START = LocalDate.of(2016, 1, 1);
 
