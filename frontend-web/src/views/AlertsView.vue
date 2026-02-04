@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -135,20 +136,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
-    <el-card shadow="never" style="border-radius: 12px">
-      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div>
-          <div style="font-size: 16px; font-weight: 700">告警</div>
-          <div style="color: #667085; margin-top: 4px">价格突破 / 均线事件 / 放量</div>
-        </div>
-        <el-space wrap>
-          <el-button :loading="loading" @click="loadAll">刷新</el-button>
-          <el-button type="primary" :loading="evaluating" @click="runEvaluate">检查告警</el-button>
-          <el-button @click="showCreate = true">新增告警</el-button>
-        </el-space>
-      </div>
-    </el-card>
+  <el-space direction="vertical" class="page" :size="16" fill>
+    <PageHeader title="告警" subtitle="价格突破 / 均线事件 / 放量">
+      <el-button :loading="loading" @click="loadAll">刷新</el-button>
+      <el-button type="primary" :loading="evaluating" @click="runEvaluate">检查告警</el-button>
+      <el-button @click="showCreate = true">新增告警</el-button>
+    </PageHeader>
 
     <el-card shadow="never" style="border-radius: 12px">
       <div style="font-weight: 700; margin-bottom: 12px">规则</div>
@@ -158,7 +151,7 @@ onMounted(() => {
         <el-table-column prop="ruleType" label="类型" width="130" />
         <el-table-column label="条件" min-width="200">
           <template #default="{ row }">
-            <span style="color:#334155">{{ ruleSummary(row) }}</span>
+            <span style="color: var(--app-text)">{{ ruleSummary(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="启用" width="90">
@@ -178,7 +171,7 @@ onMounted(() => {
     <el-card shadow="never" style="border-radius: 12px">
       <div style="display:flex; align-items:center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div style="font-weight: 700">最近触发</div>
-        <div style="color:#667085; font-size: 12px">点击“检查告警”会基于最新日线计算并生成事件</div>
+        <div class="text-muted" style="font-size: 12px">点击“检查告警”会基于最新日线计算并生成事件</div>
       </div>
       <el-table :data="events" size="small" style="width: 100%; margin-top: 12px" height="360" empty-text="暂无告警事件">
         <el-table-column prop="createdAt" label="时间" width="170" show-overflow-tooltip />
@@ -238,7 +231,7 @@ onMounted(() => {
         <el-form-item label="倍数">
           <el-input-number v-model="formVolumeMultiple" :precision="2" :step="0.1" style="width: 100%" />
         </el-form-item>
-        <div style="color:#667085; font-size: 12px; margin-left: 92px; margin-top: -8px">
+        <div class="text-muted" style="font-size: 12px; margin-left: 92px; margin-top: -8px">
           以 50 日均量为基准
         </div>
       </template>
@@ -251,4 +244,3 @@ onMounted(() => {
     </template>
   </el-dialog>
 </template>
-

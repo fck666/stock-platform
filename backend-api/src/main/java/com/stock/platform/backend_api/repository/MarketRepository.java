@@ -1303,6 +1303,841 @@ public class MarketRepository {
         );
     }
 
+    public List<StreakRankItemDto> rankLongestStreaks(
+            String indexSymbol,
+            String interval,
+            int directionSign,
+            LocalDate start,
+            LocalDate end,
+            int limit,
+            double volumeMultiple,
+            double flatThresholdPct
+    ) {
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            requireIndexId(indexSymbol);
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return List.of();
+            }
+        }
+
+        String itv = interval == null ? "1d" : interval.trim().toLowerCase();
+        if (!itv.equals("1d") && !itv.equals("1w") && !itv.equals("1m")) {
+            throw new IllegalArgumentException("Unsupported interval: " + interval);
+        }
+        int dir = directionSign >= 0 ? 1 : -1;
+
+        double flatThreshold = Math.max(0.0, flatThresholdPct) / 100.0;
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("start", start)
+                .addValue("end", end)
+                .addValue("dir", dir)
+                .addValue("volumeMultiple", Math.max(0.0, volumeMultiple))
+                .addValue("flatThreshold", flatThreshold)
+                .addValue("limit", limit);
+
+        String membersCte;
+        if (listAll) {
+            membersCte = """
+                members as (
+                    select id as security_id
+                    from market.security
+                    where security_type = 'STOCK'
+                )
+                """;
+        } else {
+            membersCte = """
+                idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                )
+                """;
+        }
+
+        String barsSql;
+        if (itv.equals("1d")) {
+            barsSql = "select security_id, bar_date, close, volume from raw";
+        } else if (itv.equals("1w")) {
+            barsSql = """
+                select lc.security_id, lc.period as bar_date, lc.close, va.volume
+                from (
+                    select distinct on (security_id, period)
+                        security_id,
+                        date_trunc('week', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                    order by security_id, period, bar_date desc
+                ) lc
+                join (
+                    select
+                        security_id,
+                        date_trunc('week', bar_date)::date as period,
+                        sum(coalesce(volume, 0)) as volume
+                    from raw
+                    group by security_id, date_trunc('week', bar_date)::date
+                ) va on va.security_id = lc.security_id and va.period = lc.period
+                """;
+        } else {
+            barsSql = """
+                select lc.security_id, lc.period as bar_date, lc.close, va.volume
+                from (
+                    select distinct on (security_id, period)
+                        security_id,
+                        date_trunc('month', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                    order by security_id, period, bar_date desc
+                ) lc
+                join (
+                    select
+                        security_id,
+                        date_trunc('month', bar_date)::date as period,
+                        sum(coalesce(volume, 0)) as volume
+                    from raw
+                    group by security_id, date_trunc('month', bar_date)::date
+                ) va on va.security_id = lc.security_id and va.period = lc.period
+                """;
+        }
+
+        String sql = """
+                with
+                %s,
+                effective_end as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d' and pb.bar_date <= :end
+                ),
+                raw as (
+                    select pb.security_id, pb.bar_date, pb.close, pb.volume
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join effective_end ee on pb.bar_date between :start and ee.bar_date
+                    where pb.interval = '1d' and pb.close is not null
+                ),
+                bars as (
+                    %s
+                ),
+                calc as (
+                    select
+                        security_id,
+                        bar_date,
+                        close,
+                        volume,
+                        lag(close) over(partition by security_id order by bar_date) as prev_close,
+                        avg(volume) over(partition by security_id order by bar_date rows between 19 preceding and current row) as vol_ma20
+                    from bars
+                ),
+                dirs as (
+                    select
+                        security_id,
+                        bar_date,
+                        case
+                            when prev_close is null or close is null then null
+                            when :volumeMultiple > 0 and (vol_ma20 is null or vol_ma20 = 0 or volume is null or volume < (vol_ma20 * :volumeMultiple)) then 0
+                            when :flatThreshold > 0 and abs((close / prev_close) - 1.0) < :flatThreshold then 0
+                            when close > prev_close then 1
+                            when close < prev_close then -1
+                            else 0
+                        end as dir
+                    from calc
+                ),
+                tagged as (
+                    select
+                        security_id,
+                        bar_date,
+                        dir,
+                        sum(case when dir <> :dir then 1 else 0 end) over(partition by security_id order by bar_date) as grp
+                    from dirs
+                    where dir is not null
+                ),
+                segments as (
+                    select
+                        security_id,
+                        grp,
+                        min(bar_date) as start_date,
+                        max(bar_date) as end_date,
+                        count(*) as streak
+                    from tagged
+                    where dir = :dir
+                    group by security_id, grp
+                ),
+                best as (
+                    select distinct on (security_id)
+                        security_id,
+                        streak,
+                        start_date,
+                        end_date
+                    from segments
+                    order by security_id, streak desc, end_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    b.streak as streak,
+                    to_char(b.start_date, 'YYYY-MM-DD') as start_date,
+                    to_char(b.end_date, 'YYYY-MM-DD') as end_date
+                from best b
+                join market.security s on s.id = b.security_id and s.security_type = 'STOCK'
+                order by b.streak desc, b.end_date desc
+                limit :limit
+                """.formatted(membersCte, barsSql);
+
+        String dirLabel = dir > 0 ? "up" : "down";
+        return jdbc.query(
+                sql,
+                params,
+                (rs, rowNum) -> new StreakRankItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        itv,
+                        dirLabel,
+                        rs.getObject("streak") == null ? null : rs.getInt("streak"),
+                        rs.getString("start_date"),
+                        rs.getString("end_date")
+                )
+        );
+    }
+
+    public StreakRankItemDto getLongestStreakForSymbol(
+            String stockSymbol,
+            String interval,
+            int directionSign,
+            LocalDate start,
+            LocalDate end,
+            double volumeMultiple,
+            double flatThresholdPct
+    ) {
+        long securityId = findSecurityIdBySymbol(stockSymbol)
+                .orElseThrow(() -> new IllegalArgumentException("Security not found: " + stockSymbol));
+
+        String itv = interval == null ? "1d" : interval.trim().toLowerCase();
+        if (!itv.equals("1d") && !itv.equals("1w") && !itv.equals("1m")) {
+            throw new IllegalArgumentException("Unsupported interval: " + interval);
+        }
+        int dir = directionSign >= 0 ? 1 : -1;
+
+        String name = jdbc.query(
+                "select name from market.security where id = :id",
+                new MapSqlParameterSource().addValue("id", securityId),
+                rs -> rs.next() ? rs.getString("name") : stockSymbol
+        );
+
+        double flatThreshold = Math.max(0.0, flatThresholdPct) / 100.0;
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("securityId", securityId)
+                .addValue("start", start)
+                .addValue("end", end)
+                .addValue("dir", dir)
+                .addValue("volumeMultiple", Math.max(0.0, volumeMultiple))
+                .addValue("flatThreshold", flatThreshold);
+
+        String barsSql;
+        if (itv.equals("1d")) {
+            barsSql = "select security_id, bar_date, close, volume from raw";
+        } else if (itv.equals("1w")) {
+            barsSql = """
+                select lc.security_id, lc.period as bar_date, lc.close, va.volume
+                from (
+                    select distinct on (security_id, period)
+                        security_id,
+                        date_trunc('week', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                    order by security_id, period, bar_date desc
+                ) lc
+                join (
+                    select
+                        security_id,
+                        date_trunc('week', bar_date)::date as period,
+                        sum(coalesce(volume, 0)) as volume
+                    from raw
+                    group by security_id, date_trunc('week', bar_date)::date
+                ) va on va.security_id = lc.security_id and va.period = lc.period
+                """;
+        } else {
+            barsSql = """
+                select lc.security_id, lc.period as bar_date, lc.close, va.volume
+                from (
+                    select distinct on (security_id, period)
+                        security_id,
+                        date_trunc('month', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                    order by security_id, period, bar_date desc
+                ) lc
+                join (
+                    select
+                        security_id,
+                        date_trunc('month', bar_date)::date as period,
+                        sum(coalesce(volume, 0)) as volume
+                    from raw
+                    group by security_id, date_trunc('month', bar_date)::date
+                ) va on va.security_id = lc.security_id and va.period = lc.period
+                """;
+        }
+
+        String sql = """
+                with
+                members as (
+                    select :securityId::bigint as security_id
+                ),
+                effective_end as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d' and pb.bar_date <= :end
+                ),
+                raw as (
+                    select pb.security_id, pb.bar_date, pb.close, pb.volume
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join effective_end ee on pb.bar_date between :start and ee.bar_date
+                    where pb.interval = '1d' and pb.close is not null
+                ),
+                bars as (
+                    %s
+                ),
+                calc as (
+                    select
+                        security_id,
+                        bar_date,
+                        close,
+                        volume,
+                        lag(close) over(partition by security_id order by bar_date) as prev_close,
+                        avg(volume) over(partition by security_id order by bar_date rows between 19 preceding and current row) as vol_ma20
+                    from bars
+                ),
+                dirs as (
+                    select
+                        security_id,
+                        bar_date,
+                        case
+                            when prev_close is null or close is null then null
+                            when :volumeMultiple > 0 and (vol_ma20 is null or vol_ma20 = 0 or volume is null or volume < (vol_ma20 * :volumeMultiple)) then 0
+                            when :flatThreshold > 0 and abs((close / prev_close) - 1.0) < :flatThreshold then 0
+                            when close > prev_close then 1
+                            when close < prev_close then -1
+                            else 0
+                        end as dir
+                    from calc
+                ),
+                tagged as (
+                    select
+                        security_id,
+                        bar_date,
+                        dir,
+                        sum(case when dir <> :dir then 1 else 0 end) over(partition by security_id order by bar_date) as grp
+                    from dirs
+                    where dir is not null
+                ),
+                segments as (
+                    select
+                        security_id,
+                        grp,
+                        min(bar_date) as start_date,
+                        max(bar_date) as end_date,
+                        count(*) as streak
+                    from tagged
+                    where dir = :dir
+                    group by security_id, grp
+                ),
+                best as (
+                    select distinct on (security_id)
+                        security_id,
+                        streak,
+                        start_date,
+                        end_date
+                    from segments
+                    order by security_id, streak desc, end_date desc
+                )
+                select
+                    streak,
+                    to_char(start_date, 'YYYY-MM-DD') as start_date,
+                    to_char(end_date, 'YYYY-MM-DD') as end_date
+                from best
+                """.formatted(barsSql);
+
+        record Row(Integer streak, String startDate, String endDate) {}
+
+        List<Row> rows = jdbc.query(
+                sql,
+                params,
+                (rs, rowNum) -> new Row(
+                        rs.getObject("streak") == null ? null : rs.getInt("streak"),
+                        rs.getString("start_date"),
+                        rs.getString("end_date")
+                )
+        );
+
+        String dirLabel = dir > 0 ? "up" : "down";
+        if (rows.isEmpty()) {
+            return new StreakRankItemDto(stockSymbol, name, itv, dirLabel, 0, null, null);
+        }
+        Row r = rows.get(0);
+        return new StreakRankItemDto(stockSymbol, name, itv, dirLabel, r.streak(), r.startDate(), r.endDate());
+    }
+
+    public List<FactorRankItemDto> rankMaxDrawdown(
+            String indexSymbol,
+            String interval,
+            LocalDate start,
+            LocalDate end,
+            int limit,
+            boolean best
+    ) {
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            requireIndexId(indexSymbol);
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return List.of();
+            }
+        }
+
+        String itv = interval == null ? "1d" : interval.trim().toLowerCase();
+        if (!itv.equals("1d") && !itv.equals("1w") && !itv.equals("1m")) {
+            throw new IllegalArgumentException("Unsupported interval: " + interval);
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("start", start)
+                .addValue("end", end)
+                .addValue("limit", limit);
+
+        String membersCte;
+        if (listAll) {
+            membersCte = """
+                members as (
+                    select id as security_id
+                    from market.security
+                    where security_type = 'STOCK'
+                )
+                """;
+        } else {
+            membersCte = """
+                idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                )
+                """;
+        }
+
+        String barsSql = buildCloseBarsSql(itv);
+        String order = best ? "mdd desc nulls last" : "mdd asc nulls last";
+        String sql = """
+                with
+                %s,
+                effective_end as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d' and pb.bar_date <= :end
+                ),
+                raw as (
+                    select pb.security_id, pb.bar_date, pb.close
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join effective_end ee on pb.bar_date between :start and ee.bar_date
+                    where pb.interval = '1d' and pb.close is not null
+                ),
+                bars as (
+                    %s
+                ),
+                calc as (
+                    select
+                        security_id,
+                        bar_date,
+                        close,
+                        max(close) over(partition by security_id order by bar_date rows between unbounded preceding and current row) as run_max
+                    from bars
+                ),
+                dd as (
+                    select
+                        security_id,
+                        bar_date,
+                        case when run_max is null or run_max = 0 then null else (close / run_max - 1.0) end as dd
+                    from calc
+                ),
+                mdd as (
+                    select security_id, min(dd) as mdd
+                    from dd
+                    group by security_id
+                ),
+                trough as (
+                    select distinct on (d.security_id)
+                        d.security_id,
+                        d.bar_date as trough_date
+                    from dd d
+                    join mdd m on m.security_id = d.security_id and m.mdd = d.dd
+                    order by d.security_id, d.bar_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    m.mdd as mdd,
+                    to_char(t.trough_date, 'YYYY-MM-DD') as end_date
+                from mdd m
+                join market.security s on s.id = m.security_id and s.security_type = 'STOCK'
+                left join trough t on t.security_id = m.security_id
+                order by %s
+                limit :limit
+                """.formatted(membersCte, barsSql, order);
+
+        String metric = "max_drawdown";
+        return jdbc.query(
+                sql,
+                params,
+                (rs, rowNum) -> new FactorRankItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        metric,
+                        rs.getObject("mdd") == null ? null : rs.getBigDecimal("mdd").doubleValue(),
+                        null,
+                        null,
+                        null,
+                        rs.getString("end_date")
+                )
+        );
+    }
+
+    public List<FactorRankItemDto> rankMaxRundown(
+            String indexSymbol,
+            String interval,
+            LocalDate start,
+            LocalDate end,
+            int limit
+    ) {
+        List<FactorRankItemDto> rows = rankMaxDrawdown(indexSymbol, interval, start, end, limit, false);
+        return rows.stream()
+                .map(r -> new FactorRankItemDto(r.symbol(), r.name(), "max_rundown", r.value(), r.count(), r.rate(), r.startDate(), r.endDate()))
+                .toList();
+    }
+
+    public List<FactorRankItemDto> rankMaxRunup(
+            String indexSymbol,
+            String interval,
+            LocalDate start,
+            LocalDate end,
+            int limit
+    ) {
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            requireIndexId(indexSymbol);
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return List.of();
+            }
+        }
+
+        String itv = interval == null ? "1d" : interval.trim().toLowerCase();
+        if (!itv.equals("1d") && !itv.equals("1w") && !itv.equals("1m")) {
+            throw new IllegalArgumentException("Unsupported interval: " + interval);
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("start", start)
+                .addValue("end", end)
+                .addValue("limit", limit);
+
+        String membersCte;
+        if (listAll) {
+            membersCte = """
+                members as (
+                    select id as security_id
+                    from market.security
+                    where security_type = 'STOCK'
+                )
+                """;
+        } else {
+            membersCte = """
+                idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                )
+                """;
+        }
+
+        String barsSql = buildCloseBarsSql(itv);
+        String sql = """
+                with
+                %s,
+                effective_end as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d' and pb.bar_date <= :end
+                ),
+                raw as (
+                    select pb.security_id, pb.bar_date, pb.close
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join effective_end ee on pb.bar_date between :start and ee.bar_date
+                    where pb.interval = '1d' and pb.close is not null
+                ),
+                bars as (
+                    %s
+                ),
+                calc as (
+                    select
+                        security_id,
+                        bar_date,
+                        close,
+                        min(close) over(partition by security_id order by bar_date rows between unbounded preceding and current row) as run_min
+                    from bars
+                ),
+                ru as (
+                    select
+                        security_id,
+                        bar_date,
+                        case when run_min is null or run_min = 0 then null else (close / run_min - 1.0) end as ru
+                    from calc
+                ),
+                mru as (
+                    select security_id, max(ru) as mru
+                    from ru
+                    group by security_id
+                ),
+                peak as (
+                    select distinct on (r.security_id)
+                        r.security_id,
+                        r.bar_date as peak_date
+                    from ru r
+                    join mru m on m.security_id = r.security_id and m.mru = r.ru
+                    order by r.security_id, r.bar_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    m.mru as mru,
+                    to_char(p.peak_date, 'YYYY-MM-DD') as end_date
+                from mru m
+                join market.security s on s.id = m.security_id and s.security_type = 'STOCK'
+                left join peak p on p.security_id = m.security_id
+                order by m.mru desc nulls last
+                limit :limit
+                """.formatted(membersCte, barsSql);
+
+        String metric = "max_runup";
+        return jdbc.query(
+                sql,
+                params,
+                (rs, rowNum) -> new FactorRankItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        metric,
+                        rs.getObject("mru") == null ? null : rs.getBigDecimal("mru").doubleValue(),
+                        null,
+                        null,
+                        null,
+                        rs.getString("end_date")
+                )
+        );
+    }
+
+    public List<FactorRankItemDto> rankNewHighLowCounts(
+            String indexSymbol,
+            String interval,
+            LocalDate start,
+            LocalDate end,
+            int limit,
+            int lookback,
+            boolean high
+    ) {
+        boolean listAll = indexSymbol == null || indexSymbol.isBlank() || "ALL".equalsIgnoreCase(indexSymbol);
+        LocalDate asOf = null;
+        if (!listAll) {
+            requireIndexId(indexSymbol);
+            asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+            if (asOf == null) {
+                return List.of();
+            }
+        }
+
+        String itv = interval == null ? "1d" : interval.trim().toLowerCase();
+        if (!itv.equals("1d") && !itv.equals("1w") && !itv.equals("1m")) {
+            throw new IllegalArgumentException("Unsupported interval: " + interval);
+        }
+
+        int lb = Math.min(Math.max(lookback, 2), 2000);
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("start", start)
+                .addValue("end", end)
+                .addValue("limit", limit);
+
+        String membersCte;
+        if (listAll) {
+            membersCte = """
+                members as (
+                    select id as security_id
+                    from market.security
+                    where security_type = 'STOCK'
+                )
+                """;
+        } else {
+            membersCte = """
+                idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                )
+                """;
+        }
+
+        String barsSql = buildCloseBarsSql(itv);
+        String statField = high ? "highs" : "lows";
+        String metric = high ? "new_high_count" : "new_low_count";
+        String sql = """
+                with
+                %s,
+                effective_end as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d' and pb.bar_date <= :end
+                ),
+                raw as (
+                    select pb.security_id, pb.bar_date, pb.close
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join effective_end ee on pb.bar_date between :start and ee.bar_date
+                    where pb.interval = '1d' and pb.close is not null
+                ),
+                bars as (
+                    %s
+                ),
+                calc as (
+                    select
+                        security_id,
+                        bar_date,
+                        close,
+                        max(close) over(partition by security_id order by bar_date rows between %d preceding and 1 preceding) as prev_max,
+                        min(close) over(partition by security_id order by bar_date rows between %d preceding and 1 preceding) as prev_min
+                    from bars
+                ),
+                stats as (
+                    select
+                        security_id,
+                        sum(case when prev_max is not null and close > prev_max then 1 else 0 end) as highs,
+                        sum(case when prev_min is not null and close < prev_min then 1 else 0 end) as lows,
+                        sum(case when prev_max is not null then 1 else 0 end) as evals
+                    from calc
+                    group by security_id
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    st.%s as cnt,
+                    st.evals as evals
+                from stats st
+                join market.security s on s.id = st.security_id and s.security_type = 'STOCK'
+                order by st.%s desc nulls last
+                limit :limit
+                """.formatted(membersCte, barsSql, lb - 1, lb - 1, statField, statField);
+
+        return jdbc.query(
+                sql,
+                params,
+                (rs, rowNum) -> {
+                    Integer cnt = rs.getObject("cnt") == null ? null : rs.getInt("cnt");
+                    Integer evals = rs.getObject("evals") == null ? null : rs.getInt("evals");
+                    Double rate = (cnt != null && evals != null && evals > 0) ? (cnt.doubleValue() / evals.doubleValue()) : null;
+                    return new FactorRankItemDto(
+                            rs.getString("symbol"),
+                            rs.getString("name"),
+                            metric,
+                            null,
+                            cnt,
+                            rate,
+                            null,
+                            null
+                    );
+                }
+        );
+    }
+
+    private static String buildCloseBarsSql(String itv) {
+        if ("1w".equals(itv)) {
+            return """
+                select distinct on (security_id, period)
+                    security_id,
+                    period as bar_date,
+                    close
+                from (
+                    select
+                        security_id,
+                        date_trunc('week', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                ) t
+                order by security_id, period, bar_date desc
+                """;
+        }
+        if ("1m".equals(itv)) {
+            return """
+                select distinct on (security_id, period)
+                    security_id,
+                    period as bar_date,
+                    close
+                from (
+                    select
+                        security_id,
+                        date_trunc('month', bar_date)::date as period,
+                        bar_date,
+                        close
+                    from raw
+                ) t
+                order by security_id, period, bar_date desc
+                """;
+        }
+        return "select security_id, bar_date, close from raw";
+    }
+
     public RsSeriesDto getRelativeStrengthSeries(String stockSymbol, String indexSymbol, LocalDate start, LocalDate end) {
         if (stockSymbol == null || stockSymbol.isBlank()) {
             throw new IllegalArgumentException("symbol is required");

@@ -90,7 +90,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
+  <el-space direction="vertical" class="page" :size="16" fill>
     <el-card shadow="never" style="border-radius: 12px">
       <template #header>
         <div style="font-weight: 700">筛选条件</div>

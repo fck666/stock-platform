@@ -4,7 +4,21 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
 import LineChart from '../components/LineChart.vue'
-import { getRelativeStrength, listIndices, getStockBars, getStockDetail, getStockIndicators, syncStock, type BarDto, type IndicatorsResponseDto, type StockDetailDto, type IndexListItemDto, type RsSeriesDto } from '../api/market'
+import {
+  getLongestStreakForSymbol,
+  getRelativeStrength,
+  listIndices,
+  getStockBars,
+  getStockDetail,
+  getStockIndicators,
+  syncStock,
+  type BarDto,
+  type IndicatorsResponseDto,
+  type StockDetailDto,
+  type IndexListItemDto,
+  type RsSeriesDto,
+  type StreakRankItemDto,
+} from '../api/market'
 
 const route = useRoute()
 
@@ -20,6 +34,10 @@ const rsLoading = ref(false)
 const rsSeries = ref<RsSeriesDto | null>(null)
 const rsIndex = ref('^SPX')
 const indices = ref<IndexListItemDto[]>([])
+
+const streakLoading = ref(false)
+const streakUp = ref<StreakRankItemDto | null>(null)
+const streakDown = ref<StreakRankItemDto | null>(null)
 
 const intervalLabel = computed(() => {
   if (interval.value === '1w') return '周K'
@@ -114,6 +132,7 @@ async function loadAll() {
     })
     await loadIndicators()
     await loadRelativeStrength()
+    await loadStreaks()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
   } finally {
@@ -271,6 +290,35 @@ async function loadRelativeStrength() {
   }
 }
 
+async function loadStreaks() {
+  if (!symbol.value) return
+  const itv = interval.value === '1d' || interval.value === '1w' || interval.value === '1m' ? interval.value : '1d'
+  streakLoading.value = true
+  try {
+    const [up, down] = await Promise.all([
+      getLongestStreakForSymbol(symbol.value, {
+        interval: itv,
+        direction: 'up',
+        start: start.value || undefined,
+        end: end.value || undefined,
+      }),
+      getLongestStreakForSymbol(symbol.value, {
+        interval: itv,
+        direction: 'down',
+        start: start.value || undefined,
+        end: end.value || undefined,
+      }),
+    ])
+    streakUp.value = up
+    streakDown.value = down
+  } catch {
+    streakUp.value = null
+    streakDown.value = null
+  } finally {
+    streakLoading.value = false
+  }
+}
+
 const rsDates = computed(() => rsSeries.value?.points?.map(p => p.date) || [])
 const rsNorm = computed(() => rsSeries.value?.points?.map(p => (p.rsNormalized == null ? null : Number(p.rsNormalized))) || [])
 
@@ -324,12 +372,12 @@ watch(rsIndex, () => loadRelativeStrength())
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
+  <el-space direction="vertical" class="page" :size="16" fill>
     <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
       <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div>
           <div style="font-size: 18px; font-weight: 700">{{ symbol }} - {{ detail?.name || '-' }}</div>
-          <div v-if="hasValue(detail?.wikiDescription)" style="color: #667085; margin-top: 6px; font-size: 14px; line-height: 1.5">
+          <div v-if="hasValue(detail?.wikiDescription)" class="text-muted" style="margin-top: 6px; font-size: 14px; line-height: 1.5">
             {{ detail?.wikiDescription }}
           </div>
           <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap">
@@ -401,7 +449,7 @@ watch(rsIndex, () => loadRelativeStrength())
               <el-button size="small" @click="loadRelativeStrength" :loading="rsLoading">刷新</el-button>
             </el-space>
           </div>
-          <div style="color: #667085; font-size: 12px; margin-top: 6px">
+          <div class="text-muted" style="font-size: 12px; margin-top: 6px">
             RS 相对收益：{{ rsSeries?.rsReturnPct == null ? '-' : (rsSeries.rsReturnPct * 100).toFixed(2) + '%' }}
             （股票 {{ rsSeries?.stockReturnPct == null ? '-' : (rsSeries.stockReturnPct * 100).toFixed(2) + '%' }}，
             指数 {{ rsSeries?.indexReturnPct == null ? '-' : (rsSeries.indexReturnPct * 100).toFixed(2) + '%' }}）
@@ -410,10 +458,44 @@ watch(rsIndex, () => loadRelativeStrength())
             <LineChart
               :title="`RS（归一化） vs ${rsIndex}`"
               :dates="rsDates"
-              :series="[{ name: 'RS', data: rsNorm, color: '#5b8ff9' }]"
+              :series="[{ name: 'RS', data: rsNorm, color: 'var(--app-accent)' }]"
               :height="220"
             />
           </div>
+        </el-card>
+
+        <el-card shadow="never" style="border-radius: 12px; margin-bottom: 16px" v-loading="streakLoading">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+            <div style="font-weight: 700">连涨/连跌（范围内最长）</div>
+            <el-button size="small" @click="loadStreaks" :loading="streakLoading">刷新</el-button>
+          </div>
+          <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+            统计口径：相邻两根K线收盘价比较，连续上涨/下跌的周期数（不含平盘）。
+          </div>
+          <el-row :gutter="12" style="margin-top: 12px">
+            <el-col :span="12">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+                <div class="text-muted" style="font-size: 12px">最长连涨</div>
+                <div style="font-size: 22px; font-weight: 800; margin-top: 6px; color: var(--app-success)">
+                  {{ streakUp?.streak ?? '-' }}
+                </div>
+                <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+                  {{ streakUp?.startDate || '-' }} → {{ streakUp?.endDate || '-' }}
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="12">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+                <div class="text-muted" style="font-size: 12px">最长连跌</div>
+                <div style="font-size: 22px; font-weight: 800; margin-top: 6px; color: var(--app-danger)">
+                  {{ streakDown?.streak ?? '-' }}
+                </div>
+                <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+                  {{ streakDown?.startDate || '-' }} → {{ streakDown?.endDate || '-' }}
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
         </el-card>
 
         <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
@@ -475,7 +557,7 @@ watch(rsIndex, () => loadRelativeStrength())
 
         <el-card v-if="hasValue(detail?.wikiExtract)" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">摘要</div>
-          <div style="color: #667085; white-space: pre-wrap; line-height: 1.6">
+          <div class="text-muted" style="white-space: pre-wrap; line-height: 1.6">
             {{ detail?.wikiExtract }}
           </div>
         </el-card>

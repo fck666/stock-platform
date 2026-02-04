@@ -19,9 +19,16 @@ const props = defineProps<{
 
 const elRef = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
+let onThemeChange: (() => void) | null = null
 const zoomStart = ref<number>(props.windowStart ?? 50)
 const zoomEnd = ref<number>(props.windowEnd ?? 100)
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+
+function cssVar(name: string, fallback: string) {
+  if (typeof window === 'undefined') return fallback
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(Math.max(n, min), max)
@@ -133,15 +140,25 @@ function onPointerUp(e: PointerEvent) {
 }
 
 function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
+  const bg = cssVar('--el-bg-color', '#ffffff')
+  const muted = cssVar('--app-muted', '#667085')
+  const border = cssVar('--app-border', '#cfd5e2')
+  const gridLine = cssVar('--el-border-color-lighter', '#eef1f6')
+  const tooltipBg = cssVar('--el-bg-color-overlay', 'rgba(17,17,17,0.9)')
+  const tooltipText = cssVar('--el-text-color-primary', '#fff')
+  const accent = cssVar('--app-accent', '#5b8ff9')
+  const success = cssVar('--app-success', '#26a69a')
+  const danger = cssVar('--app-danger', '#ef5350')
+
   if (!bars || bars.length === 0) {
     return {
       title: title ? { text: title, left: 10, top: 6, textStyle: { fontSize: 14 } } : undefined,
-      backgroundColor: '#ffffff',
+      backgroundColor: bg,
       graphic: {
         type: 'text',
         left: 'center',
         top: 'middle',
-        style: { text: '暂无数据', fill: '#667085', fontSize: 14 },
+        style: { text: '暂无数据', fill: muted, fontSize: 14 },
       },
     }
   }
@@ -151,7 +168,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     const up = (b.close ?? 0) >= (b.open ?? 0)
     return {
       value: b.volume === null || b.volume === undefined ? '-' : b.volume,
-      itemStyle: { color: up ? '#26a69a' : '#ef5350' },
+      itemStyle: { color: up ? success : danger },
     }
   })
 
@@ -197,8 +214,8 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       gridIndex: i,
       data: categories,
       boundaryGap: true,
-      axisLine: { lineStyle: { color: '#cfd5e2' } },
-      axisLabel: i === grids.length - 1 ? { color: '#667085' } : { show: false },
+      axisLine: { lineStyle: { color: border } },
+      axisLabel: i === grids.length - 1 ? { color: muted } : { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
       min: 'dataMin',
@@ -211,8 +228,8 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     scale: true,
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { color: '#667085', margin: 12 },
-    splitLine: { lineStyle: { color: '#eef1f6' } },
+    axisLabel: { color: muted, margin: 12 },
+    splitLine: { lineStyle: { color: gridLine } },
   })
   for (let i = 0; i < subCount; i++) {
     yAxes.push({
@@ -220,8 +237,8 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       scale: true,
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: '#667085', margin: 12 },
-      splitLine: { lineStyle: { color: '#eef1f6' } },
+      axisLabel: { color: muted, margin: 12 },
+      splitLine: { lineStyle: { color: gridLine } },
     })
   }
   yAxes.push({
@@ -230,7 +247,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: {
-      color: '#667085',
+      color: muted,
       margin: 12,
       formatter: (v: number) => {
         const abs = Math.abs(v)
@@ -240,7 +257,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
         return String(v)
       },
     },
-    splitLine: { lineStyle: { color: '#eef1f6' } },
+    splitLine: { lineStyle: { color: gridLine } },
   })
 
   const series: any[] = [
@@ -249,10 +266,10 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       type: 'candlestick',
       data: candle,
       itemStyle: {
-        color: '#26a69a',
-        color0: '#ef5350',
-        borderColor: '#26a69a',
-        borderColor0: '#ef5350',
+        color: success,
+        color0: danger,
+        borderColor: success,
+        borderColor0: danger,
       },
     },
   ]
@@ -288,7 +305,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       yAxisIndex: 0,
       symbol: 'pin',
       symbolSize: 18,
-      itemStyle: { color: '#5b8ff9' },
+      itemStyle: { color: accent },
       data: divPoints,
       z: 20,
       tooltip: {
@@ -315,7 +332,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
 
   const maLines = props.maLines || {}
   const maColors: Record<string, string> = {
-    '20': '#5b8ff9',
+    '20': accent,
     '60': '#61dca3',
     '180': '#f6bd16',
     '360': '#7262fd',
@@ -327,7 +344,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
       data,
       showSymbol: false,
       smooth: true,
-      lineStyle: { width: 1, color: maColors[k] || '#667085' },
+      lineStyle: { width: 1, color: maColors[k] || muted },
       emphasis: { focus: 'series' },
     })
   }
@@ -346,7 +363,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
           data: macd.dif,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: 1, color: '#5b8ff9' },
+          lineStyle: { width: 1, color: accent },
         },
         {
           name: `DEA${subCount > 1 ? `#${i + 1}` : ''}`,
@@ -367,7 +384,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
             if (v === null || v === undefined) return null
             return {
               value: v,
-              itemStyle: { color: v >= 0 ? '#26a69a' : '#ef5350' },
+              itemStyle: { color: v >= 0 ? success : danger },
             }
           }),
           barWidth: '60%',
@@ -385,7 +402,7 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
           data: kdj.k,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: 1, color: '#5b8ff9' },
+          lineStyle: { width: 1, color: accent },
         },
         {
           name: `D${subCount > 1 ? `#${i + 1}` : ''}`,
@@ -422,15 +439,15 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
 
   return {
     title: title ? { text: title, left: 10, top: 6, textStyle: { fontSize: 14 } } : undefined,
-    backgroundColor: '#ffffff',
+    backgroundColor: bg,
     animation: false,
     grid: grids,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
-      backgroundColor: 'rgba(17,17,17,0.9)',
+      backgroundColor: tooltipBg,
       borderWidth: 0,
-      textStyle: { color: '#fff' },
+      textStyle: { color: tooltipText },
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     xAxis: xAxes,
@@ -495,8 +512,11 @@ onMounted(() => {
   render()
   const onResize = () => chart?.resize()
   window.addEventListener('resize', onResize)
+  onThemeChange = () => render()
+  window.addEventListener('themechange', onThemeChange)
   onBeforeUnmount(() => {
     window.removeEventListener('resize', onResize)
+    if (onThemeChange) window.removeEventListener('themechange', onThemeChange)
     zr.off('mousewheel')
     elRef.value?.removeEventListener('wheel', onWheel as any)
     elRef.value?.removeEventListener('pointerdown', onPointerDown as any)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import { listIndices, syncWiki, syncFundamentals, syncPrices, syncStocks, getSyncJob, type IndexListItemDto, type SyncJobDto } from '../api/market'
 
 const activeJobs = ref<SyncJobDto[]>([])
@@ -124,7 +125,11 @@ function getStatusType(status: string) {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
+  <el-space direction="vertical" class="page" :size="16" fill>
+    <PageHeader title="数据同步" subtitle="指数成分 / Wiki / 基本面 / 历史价格">
+      <div class="text-muted" style="font-size: 12px">当前：{{ indices.find(i => i.symbol === activeIndex)?.name || activeIndex }}</div>
+    </PageHeader>
+
     <el-tabs v-model="activeIndex" type="card">
       <el-tab-pane v-for="idx in indices" :key="idx.symbol" :label="idx.name" :name="idx.symbol" />
     </el-tabs>
@@ -147,7 +152,7 @@ function getStatusType(status: string) {
               全量价格同步 (2016-)
             </el-button>
           </el-space>
-          <div style="color: #667085; font-size: 13px; margin-top: 12px">
+          <div class="text-muted" style="font-size: 13px; margin-top: 12px">
             Wiki同步：抓取成分股列表及简介；基本面/分红：抓取市值/股本/分红拆股；价格同步：抓取该指数下所有股票的历史日线。
           </div>
         </div>
@@ -208,7 +213,7 @@ function getStatusType(status: string) {
             </el-table-column>
             <el-table-column prop="exitCode" label="结果" width="70">
               <template #default="{ row }">
-                <span :style="{ color: row.exitCode === 0 ? '#26a69a' : '#ef5350' }">
+                <span :style="{ color: row.exitCode === 0 ? 'var(--app-success)' : 'var(--app-danger)' }">
                   {{ row.exitCode === 0 ? '成功' : '失败' }}
                 </span>
               </template>
@@ -219,7 +224,7 @@ function getStatusType(status: string) {
                   <template #reference>
                     <el-button link type="primary">查看日志</el-button>
                   </template>
-                  <pre style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 4px; font-size: 12px; max-height: 400px; overflow: auto; margin: 0">
+                  <pre style="background: var(--el-fill-color-lighter); color: var(--el-text-color-primary); padding: 12px; border-radius: 8px; font-size: 12px; max-height: 400px; overflow: auto; margin: 0">
                     {{ row.outputTail || '无日志输出' }}
                   </pre>
                 </el-popover>

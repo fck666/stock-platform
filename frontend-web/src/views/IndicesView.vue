@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import {
   createIndex,
   getIndexConstituents,
@@ -141,19 +142,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
-    <el-card shadow="never" style="border-radius: 12px">
-      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div>
-          <div style="font-size: 16px; font-weight: 700">指数管理</div>
-          <div style="color: #667085; margin-top: 4px">新增指数、设置初始成分股、后续维护成分股</div>
-        </div>
-        <el-space>
-          <el-button :loading="loading" @click="load">刷新</el-button>
-          <el-button type="primary" @click="showCreate = true">增加指数</el-button>
-        </el-space>
-      </div>
-    </el-card>
+  <el-space direction="vertical" class="page" :size="16" fill>
+    <PageHeader title="指数管理" subtitle="新增指数、设置初始成分股、后续维护成分股">
+      <el-button :loading="loading" @click="load">刷新</el-button>
+      <el-button type="primary" @click="showCreate = true">增加指数</el-button>
+    </PageHeader>
 
     <el-card shadow="never" style="border-radius: 12px">
       <el-table v-loading="loading" :data="sortedIndices" row-key="symbol" style="width: 100%">
@@ -198,7 +191,7 @@ onMounted(() => {
   </el-dialog>
 
   <el-dialog v-model="showEdit" title="维护成分股" width="560px">
-    <div style="margin-bottom: 8px; color: #667085">
+    <div class="text-muted" style="margin-bottom: 8px">
       指数：<span style="font-weight: 600">{{ editIndexSymbol }}</span>
     </div>
     <el-space wrap style="margin-bottom: 12px">

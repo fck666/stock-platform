@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { ElTable } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import { createStock, listIndices, listStocks, syncStocks, type IndexListItemDto, type StockListItemDto } from '../api/market'
 
 const router = useRouter()
@@ -168,7 +169,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
+  <el-space direction="vertical" class="page" :size="16" fill>
     <el-card shadow="never" style="border-radius: 12px">
       <el-space wrap>
         <el-button
@@ -188,40 +189,30 @@ onMounted(() => {
       </el-space>
     </el-card>
 
-    <el-card shadow="never" style="border-radius: 12px">
-      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div>
-          <div style="font-size: 16px; font-weight: 700">股票列表 ({{ activeIndexName }})</div>
-          <div style="color: #667085; margin-top: 4px">
-            支持搜索、分页、选择当前页并批量同步日线数据
-            <span v-if="activeIndex === 'ALL'">（同步时请选择指数范围）</span>
-          </div>
-        </div>
-        <el-space>
-          <el-button :disabled="!hasIndicesLoaded" @click="showCreate = true">增加股票</el-button>
-          <el-input
-            v-model="query"
-            placeholder="搜索：股票代码 / 公司名 / 简称"
-            clearable
-            style="width: 280px"
-            @keyup.enter="page = 1; load()"
-          />
-          <el-button :loading="loading" @click="page = 1; load()">搜索</el-button>
-          <el-button :disabled="rows.length === 0" @click="toggleSelectAllCurrentPage">
-            {{ allSelectedOnPage ? '取消全选' : '全选当前页' }}
-          </el-button>
-          <el-select v-model="syncIndex" size="small" style="width: 160px" :disabled="activeIndex !== 'ALL'">
-            <el-option
-              v-for="idx in indices"
-              :key="idx.symbol"
-              :label="`同步：${idx.name || idx.symbol}`"
-              :value="idx.symbol"
-            />
-          </el-select>
-          <el-button type="primary" :loading="syncing" @click="syncSelected">同步数据</el-button>
-        </el-space>
+    <PageHeader
+      :title="`股票列表 (${activeIndexName})`"
+      subtitle="支持搜索、分页、选择当前页并批量同步日线数据"
+    >
+      <el-button :disabled="!hasIndicesLoaded" @click="showCreate = true">增加股票</el-button>
+      <el-input
+        v-model="query"
+        placeholder="搜索：股票代码 / 公司名 / 简称"
+        clearable
+        style="width: 280px"
+        @keyup.enter="page = 1; load()"
+      />
+      <el-button :loading="loading" @click="page = 1; load()">搜索</el-button>
+      <el-button :disabled="rows.length === 0" @click="toggleSelectAllCurrentPage">
+        {{ allSelectedOnPage ? '取消全选' : '全选当前页' }}
+      </el-button>
+      <el-select v-model="syncIndex" size="small" style="width: 160px" :disabled="activeIndex !== 'ALL'">
+        <el-option v-for="idx in indices" :key="idx.symbol" :label="`同步：${idx.name || idx.symbol}`" :value="idx.symbol" />
+      </el-select>
+      <el-button type="primary" :loading="syncing" @click="syncSelected">同步数据</el-button>
+      <div v-if="activeIndex === 'ALL'" class="text-muted" style="width: 100%; font-size: 12px">
+        同步时请选择指数范围
       </div>
-    </el-card>
+    </PageHeader>
 
     <el-card shadow="never" style="border-radius: 12px">
       <el-table
@@ -242,7 +233,7 @@ onMounted(() => {
         <el-table-column prop="headquarters" label="总部" min-width="180" show-overflow-tooltip />
         <el-table-column label="简介" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
-            <span style="color: #667085">{{ row.wikiDescription || '-' }}</span>
+            <span class="text-muted">{{ row.wikiDescription || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
@@ -253,7 +244,7 @@ onMounted(() => {
       </el-table>
 
       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px">
-        <div style="color: #667085">已选择：{{ selectedSymbols.length }} 只</div>
+        <div class="text-muted">已选择：{{ selectedSymbols.length }} 只</div>
         <el-pagination
           background
           layout="sizes, prev, pager, next, jumper"

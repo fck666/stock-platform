@@ -231,7 +231,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
+  <el-space direction="vertical" class="page" :size="16" fill>
     <el-tabs v-model="activeIndex" type="card" class="index-tabs">
       <el-tab-pane v-for="idx in indices" :key="idx.symbol" :label="idx.name" :name="idx.symbol" />
     </el-tabs>
@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
         <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px">
           <div>
             <div style="font-weight: 700; font-size: 16px">{{ title }}</div>
-            <div style="font-size: 13px; color: #667085; margin-top: 4px">上方为日K线，下方为成交量。默认展示最近两年的数据。</div>
+            <div class="text-muted" style="font-size: 13px; margin-top: 4px">上方为日K线，下方为成交量。默认展示最近两年的数据。</div>
           </div>
           <el-space wrap>
             <el-select v-model="interval" size="small" style="width: 110px">

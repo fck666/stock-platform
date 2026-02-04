@@ -127,6 +127,27 @@ export type ScreenerItemDto = {
   volume: number | null
 }
 
+export type StreakRankItemDto = {
+  symbol: string
+  name: string | null
+  interval: string
+  direction: string
+  streak: number | null
+  startDate: string | null
+  endDate: string | null
+}
+
+export type FactorRankItemDto = {
+  symbol: string
+  name: string | null
+  metric: string
+  value: number | null
+  count: number | null
+  rate: number | null
+  startDate: string | null
+  endDate: string | null
+}
+
 export type RsPointDto = {
   date: string
   stockClose: number | null
@@ -263,6 +284,42 @@ export async function getBreadth(index: string) {
 
 export async function runScreener(params: { index: string; preset: string; lookbackDays: number; limit: number }) {
   const res = await http.get<ScreenerItemDto[]>('/api/market/screener', { params })
+  return res.data
+}
+
+export async function rankStreaks(params: {
+  index: string
+  interval: string
+  direction: string
+  start?: string
+  end?: string
+  limit: number
+  volumeMultiple?: number
+  flatThresholdPct?: number
+}) {
+  const res = await http.get<StreakRankItemDto[]>('/api/market/streaks/rank', { params })
+  return res.data
+}
+
+export async function getLongestStreakForSymbol(
+  symbol: string,
+  params: { interval: string; direction: string; start?: string; end?: string; volumeMultiple?: number; flatThresholdPct?: number }
+) {
+  const res = await http.get<StreakRankItemDto>(`/api/market/streaks/symbols/${encodeURIComponent(symbol)}/longest`, { params })
+  return res.data
+}
+
+export async function rankFactors(params: {
+  index: string
+  interval: string
+  metric: string
+  mode?: string
+  lookback?: number
+  start?: string
+  end?: string
+  limit: number
+}) {
+  const res = await http.get<FactorRankItemDto[]>('/api/market/factors/rank', { params })
   return res.data
 }
 

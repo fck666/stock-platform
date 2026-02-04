@@ -12,40 +12,65 @@ const props = defineProps<{
 
 const elRef = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
+let onThemeChange: (() => void) | null = null
+
+function cssVar(name: string, fallback: string) {
+  if (typeof window === 'undefined') return fallback
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
+
+function resolveColor(input: string | undefined, fallback: string) {
+  if (!input) return fallback
+  const s = input.trim()
+  if (s.startsWith('var(')) {
+    const m = s.match(/var\((--[^)]+)\)/)
+    if (m?.[1]) return cssVar(m[1], fallback)
+  }
+  return s
+}
 
 function buildOption(): echarts.EChartsOption {
+  const bg = cssVar('--el-bg-color', '#ffffff')
+  const muted = cssVar('--app-muted', '#667085')
+  const border = cssVar('--app-border', '#cfd5e2')
+  const gridLine = cssVar('--el-border-color-lighter', '#eef1f6')
+  const tooltipBg = cssVar('--el-bg-color-overlay', 'rgba(17,17,17,0.9)')
+  const tooltipText = cssVar('--el-text-color-primary', '#fff')
+  const accent = cssVar('--app-accent', '#5b8ff9')
+
   const hasData = props.dates.length > 0 && props.series.some(s => s.data.some(v => v !== null && v !== undefined))
   if (!hasData) {
     return {
       title: props.title ? { text: props.title, left: 10, top: 6, textStyle: { fontSize: 14 } } : undefined,
-      backgroundColor: '#ffffff',
+      backgroundColor: bg,
       graphic: {
         type: 'text',
         left: 'center',
         top: 'middle',
-        style: { text: '暂无数据', fill: '#667085', fontSize: 14 },
+        style: { text: '暂无数据', fill: muted, fontSize: 14 },
       },
     }
   }
 
   return {
     title: props.title ? { text: props.title, left: 10, top: 6, textStyle: { fontSize: 14 } } : undefined,
-    backgroundColor: '#ffffff',
+    backgroundColor: bg,
     animation: false,
     grid: { left: 56, right: 20, top: 44, bottom: 36 },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'line' },
-      backgroundColor: 'rgba(17,17,17,0.9)',
+      backgroundColor: tooltipBg,
       borderWidth: 0,
-      textStyle: { color: '#fff' },
+      textStyle: { color: tooltipText },
     },
     xAxis: {
       type: 'category',
       data: props.dates,
       boundaryGap: false,
-      axisLine: { lineStyle: { color: '#cfd5e2' } },
-      axisLabel: { color: '#667085' },
+      axisLine: { lineStyle: { color: border } },
+      axisLabel: { color: muted },
       axisTick: { show: false },
       splitLine: { show: false },
     },
@@ -54,10 +79,10 @@ function buildOption(): echarts.EChartsOption {
       scale: true,
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: '#667085', margin: 10 },
-      splitLine: { lineStyle: { color: '#eef1f6' } },
+      axisLabel: { color: muted, margin: 10 },
+      splitLine: { lineStyle: { color: gridLine } },
       name: props.yLabel,
-      nameTextStyle: { color: '#667085', padding: [0, 0, 0, 0] },
+      nameTextStyle: { color: muted, padding: [0, 0, 0, 0] },
     },
     series: props.series.map((s) => ({
       name: s.name,
@@ -65,7 +90,7 @@ function buildOption(): echarts.EChartsOption {
       data: s.data,
       showSymbol: false,
       smooth: true,
-      lineStyle: { width: 2, color: s.color || '#5b8ff9' },
+      lineStyle: { width: 2, color: resolveColor(s.color, accent) },
       emphasis: { focus: 'series' },
     })),
   }
@@ -83,6 +108,12 @@ onMounted(() => {
   const onResize = () => chart?.resize()
   window.addEventListener('resize', onResize)
   onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+  onThemeChange = () => render()
+  window.addEventListener('themechange', onThemeChange)
+  onBeforeUnmount(() => {
+    if (onThemeChange) window.removeEventListener('themechange', onThemeChange)
+  })
 })
 
 watch(
@@ -107,4 +138,3 @@ onBeforeUnmount(() => {
     }"
   />
 </template>
-

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import {
   createTradePlan,
   deleteTradePlan,
@@ -136,20 +137,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-space direction="vertical" style="width: 100%" :size="16" fill>
-    <el-card shadow="never" style="border-radius: 12px">
-      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div>
-          <div style="font-size: 16px; font-weight: 700">交易计划</div>
-          <div style="color: #667085; margin-top: 4px">记录计划、跟踪盈亏、快速复盘</div>
-        </div>
-        <el-space wrap>
-          <el-segmented v-model="statusFilter" :options="statusOptions" />
-          <el-button :loading="loading" @click="load">刷新</el-button>
-          <el-button type="primary" @click="openCreate">新增计划</el-button>
-        </el-space>
-      </div>
-    </el-card>
+  <el-space direction="vertical" class="page" :size="16" fill>
+    <PageHeader title="交易计划" subtitle="记录计划、跟踪盈亏、快速复盘">
+      <el-segmented v-model="statusFilter" :options="statusOptions" />
+      <el-button :loading="loading" @click="load">刷新</el-button>
+      <el-button type="primary" @click="openCreate">新增计划</el-button>
+    </PageHeader>
 
     <el-card shadow="never" style="border-radius: 12px">
       <el-table v-loading="loading" :data="filtered" row-key="id" style="width: 100%">
@@ -182,14 +175,14 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="盈亏" width="110" align="right">
           <template #default="{ row }">
-            <span :style="{ color: row.pnlPct != null && row.pnlPct >= 0 ? '#26a69a' : '#ef5350' }">{{ fmtPct(row.pnlPct) }}</span>
+            <span :style="{ color: row.pnlPct != null && row.pnlPct >= 0 ? 'var(--app-success)' : 'var(--app-danger)' }">{{ fmtPct(row.pnlPct) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="触发" width="110">
           <template #default="{ row }">
             <el-tag v-if="row.hitStop" type="danger" size="small">止损</el-tag>
             <el-tag v-else-if="row.hitTarget" type="success" size="small">目标</el-tag>
-            <span v-else style="color:#667085">-</span>
+            <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="note" label="备注" min-width="180" show-overflow-tooltip />
@@ -233,7 +226,7 @@ onMounted(() => {
       <el-form-item label="入场区间">
         <el-space style="width: 100%">
           <el-input-number v-model="formEntryLow" :precision="4" :step="0.1" style="flex: 1" placeholder="低" />
-          <span style="color: #667085">~</span>
+          <span class="text-muted">~</span>
           <el-input-number v-model="formEntryHigh" :precision="4" :step="0.1" style="flex: 1" placeholder="高" />
         </el-space>
       </el-form-item>

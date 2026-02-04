@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getInitialTheme, toggleTheme, type ThemeMode } from './theme'
 
 const route = useRoute()
 const router = useRouter()
+
+const theme = ref<ThemeMode>(getInitialTheme())
 
 const active = computed(() => {
   if (route.path.startsWith('/market')) return '/market'
@@ -19,13 +22,17 @@ const active = computed(() => {
 function handleSelect(index: string) {
   router.push(index)
 }
+
+function handleToggleTheme() {
+  theme.value = toggleTheme()
+}
 </script>
 
 <template>
   <el-container style="min-height: 100vh">
-    <el-header style="display: flex; align-items: center; gap: 16px">
-      <div style="font-weight: 700; font-size: 16px">Stock Platform</div>
-      <el-menu mode="horizontal" :default-active="active" @select="handleSelect" style="flex: 1">
+    <el-header class="app-header">
+      <div class="app-brand">Stock Platform</div>
+      <el-menu mode="horizontal" :default-active="active" @select="handleSelect" class="app-menu" ellipsis>
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/market">市场</el-menu-item>
         <el-menu-item index="/stocks">股票列表</el-menu-item>
@@ -35,8 +42,11 @@ function handleSelect(index: string) {
         <el-menu-item index="/analysis">股票分析</el-menu-item>
         <el-menu-item index="/sync">数据同步</el-menu-item>
       </el-menu>
+      <el-button class="theme-toggle" size="small" @click="handleToggleTheme">
+        {{ theme === 'dark' ? '亮色' : '暗色' }}
+      </el-button>
     </el-header>
-    <el-main style="padding: 16px; background: #f6f7fb">
+    <el-main class="app-main">
       <router-view />
     </el-main>
   </el-container>
