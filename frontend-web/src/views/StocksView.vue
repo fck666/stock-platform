@@ -183,6 +183,7 @@ onMounted(() => {
           :key="idx.symbol"
           :type="activeIndex === idx.symbol ? 'primary' : 'default'"
           @click="changeIndex(idx.symbol as any)"
+          class="font-mono"
         >
           {{ idx.name || idx.symbol }}
         </el-button>
@@ -226,7 +227,11 @@ onMounted(() => {
         @sort-change="onSortChange"
       >
         <el-table-column type="selection" width="44" />
-        <el-table-column prop="symbol" label="代码" width="110" sortable="custom" />
+        <el-table-column prop="symbol" label="代码" width="110" sortable="custom">
+          <template #default="{ row }">
+            <span class="font-mono" style="font-weight: 600">{{ row.symbol }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="name" label="公司" min-width="220" sortable="custom" show-overflow-tooltip />
         <el-table-column prop="gicsSector" label="行业" width="140" show-overflow-tooltip />
         <el-table-column prop="gicsSubIndustry" label="子行业" min-width="200" show-overflow-tooltip />

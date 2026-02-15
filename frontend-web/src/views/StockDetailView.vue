@@ -121,6 +121,7 @@ const hasMoreCorporateActions = computed(() => {
 
 async function loadAll() {
   if (!symbol.value) return
+  document.title = `${symbol.value} - Stock Platform`
   loading.value = true
   try {
     detail.value = await getStockDetail(symbol.value)
@@ -376,7 +377,10 @@ watch(rsIndex, () => loadRelativeStrength())
     <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
       <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
         <div>
-          <div style="font-size: 18px; font-weight: 700">{{ symbol }} - {{ detail?.name || '-' }}</div>
+          <div style="font-size: 18px; font-weight: 700">
+            <span class="font-mono">{{ symbol }}</span>
+            <span style="font-weight: 400; margin-left: 8px">{{ detail?.name || '-' }}</span>
+          </div>
           <div v-if="hasValue(detail?.wikiDescription)" class="text-muted" style="margin-top: 6px; font-size: 14px; line-height: 1.5">
             {{ detail?.wikiDescription }}
           </div>
@@ -506,7 +510,9 @@ watch(rsIndex, () => loadRelativeStrength())
       <el-col :xs="24" :md="12">
         <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
           <el-descriptions :column="1" border>
-            <el-descriptions-item label="代码">{{ detail?.symbol || symbol }}</el-descriptions-item>
+            <el-descriptions-item label="代码">
+              <span class="font-mono">{{ detail?.symbol || symbol }}</span>
+            </el-descriptions-item>
             <el-descriptions-item label="公司" v-if="hasValue(detail?.name)">{{ detail?.name }}</el-descriptions-item>
             <el-descriptions-item label="行业" v-if="hasValue(detail?.gicsSector)">{{ detail?.gicsSector }}</el-descriptions-item>
             <el-descriptions-item label="子行业" v-if="hasValue(detail?.gicsSubIndustry)">{{ detail?.gicsSubIndustry }}</el-descriptions-item>

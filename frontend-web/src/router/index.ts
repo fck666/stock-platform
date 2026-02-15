@@ -4,17 +4,25 @@ import { auth } from '../auth/auth'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
-    { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
-    { path: '/market', name: 'market', component: () => import('../views/MarketView.vue') },
-    { path: '/stocks', name: 'stocks', component: () => import('../views/StocksView.vue') },
-    { path: '/indices', name: 'indices', component: () => import('../views/IndicesView.vue') },
-    { path: '/plans', name: 'plans', component: () => import('../views/PlansView.vue') },
-    { path: '/alerts', name: 'alerts', component: () => import('../views/AlertsView.vue') },
-    { path: '/stocks/:symbol', name: 'stockDetail', component: () => import('../views/StockDetailView.vue') },
-    { path: '/analysis', name: 'analysis', component: () => import('../views/AnalysisView.vue') },
-    { path: '/sync', name: 'sync', component: () => import('../views/SyncView.vue'), meta: { requiresPermission: 'data.sync.execute' } },
+    { path: '/', name: 'home', component: () => import('../views/HomeView.vue'), meta: { title: '首页' } },
+    { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { title: '登录' } },
+    { path: '/market', name: 'market', component: () => import('../views/MarketView.vue'), meta: { title: '市场概览' } },
+    { path: '/stocks', name: 'stocks', component: () => import('../views/StocksView.vue'), meta: { title: '股票列表' } },
+    { path: '/indices', name: 'indices', component: () => import('../views/IndicesView.vue'), meta: { title: '指数管理' } },
+    { path: '/plans', name: 'plans', component: () => import('../views/PlansView.vue'), meta: { title: '交易计划' } },
+    { path: '/alerts', name: 'alerts', component: () => import('../views/AlertsView.vue'), meta: { title: '告警' } },
+    { path: '/stocks/:symbol', name: 'stockDetail', component: () => import('../views/StockDetailView.vue'), meta: { title: '股票详情' } },
+    { path: '/analysis', name: 'analysis', component: () => import('../views/AnalysisView.vue'), meta: { title: '股票分析' } },
+    { path: '/sync', name: 'sync', component: () => import('../views/SyncView.vue'), meta: { requiresPermission: 'data.sync.execute', title: '数据同步' } },
   ],
+})
+
+router.afterEach((to) => {
+  let title = (to.meta.title as string) || ''
+  if (to.name === 'stockDetail' && to.params.symbol) {
+    title = String(to.params.symbol).toUpperCase()
+  }
+  document.title = title ? `${title} - Stock Platform` : 'Stock Platform'
 })
 
 router.beforeEach((to) => {
