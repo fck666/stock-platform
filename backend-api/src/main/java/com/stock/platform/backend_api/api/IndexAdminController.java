@@ -40,6 +40,7 @@ public class IndexAdminController {
     }
 
     @GetMapping("/{symbol}/constituents")
+    @PreAuthorize("hasAuthority('admin.index.write')")
     public List<String> getConstituents(@PathVariable("symbol") String symbol) {
         String idx = normalizeIndexSymbol(symbol);
         return market.listIndexConstituentSymbols(idx);

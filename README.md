@@ -187,17 +187,29 @@ export EODHD_USE_FOR_SPX=false
 - `SECURITY_JWT_ACCESS_TTL_SECONDS`：Access Token 有效期（秒），默认 1800（30分钟）。
 - `SECURITY_JWT_REFRESH_TTL_SECONDS`：Refresh Token 有效期（秒），默认 2592000（30天）。
 
-#### 2. 初始化管理员（Bootstrapping）
+#### 2. 初始化管理员 (Bootstrapping)
 
 后端启动时可自动检查并创建/更新初始管理员账号（密码不写入代码库）。
 
 - `INIT_ADMIN_USERNAME`：管理员用户名（例如 `admin`）。
 - `INIT_ADMIN_PASSWORD`：管理员密码（例如 `ChangeMe123!`）。
-- `INIT_ADMIN_FORCE_RESET_PASSWORD`：`true` | `false`（默认 `false`）。
-  - 若为 `true`，每次启动都会强制把该用户的密码重置为 `INIT_ADMIN_PASSWORD`（慎用）。
-  - 若为 `false`，仅当该用户**从未设置过密码**（即首次创建）时才设置密码。
 
-#### 3. 测试环境免登（Dev/Test Only）
+> **注意**：系统默认会尝试初始化用户 `fcc` 为超级管理员（默认密码 `123456`，请及时修改）。
+
+#### 3. 权限与审计
+
+- **角色体系**：
+  - `super_admin`：超级管理员，拥有所有权限，包括管理其他管理员。
+  - `admin`：普通管理员，可管理业务数据与普通用户，不可管理超级管理员。
+  - `manager` / `viewer` / `user`：业务角色。
+- **审计日志**：
+  - 所有敏感操作（如用户创建、删除、权限变更、密码重置）均会记录在 `iam.audit_logs` 表中。
+  - 超级管理员可通过前端界面查看审计日志。
+- **单点登录 (SSO)**：
+  - 系统默认启用单点登录限制（同一账号同一端仅允许一个活跃会话）。
+  - 登录时会自动踢出旧会话。
+
+#### 4. 测试环境免登 (Dev/Test Only)
 
 **仅建议在本地或内网测试环境开启**。开启后，若请求未携带 Authorization 头，后端会自动注入指定的身份，前端也会自动识别为已登录。
 

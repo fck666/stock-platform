@@ -233,10 +233,34 @@ CREATE TABLE IF NOT EXISTS iam.refresh_tokens (
     token_hash text not null unique,
     expires_at timestamptz not null,
     revoked_at timestamptz,
+    client_type text not null default 'desktop',
     created_at timestamptz not null default now()
 );
 
+-- Audit logs table for tracking sensitive operations
+CREATE TABLE IF NOT EXISTS iam.audit_logs (
+    id uuid primary key default gen_random_uuid(),
+    actor_id uuid references iam.users (id) on delete set null,
+    actor_username text,
+    target_id uuid references iam.users (id) on delete set null,
+    target_username text,
+    action text not null,
+    details jsonb,
+    ip_address text,
+    user_agent text,
+    created_at timestamptz not null default now()
+);
+
+-- Index for faster audit log queries
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON iam.audit_logs (actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON iam.audit_logs (target_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON iam.audit_logs (action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON iam.audit_logs (created_at);
+
+INSERT INTO iam.roles (code, name) VALUES ('super_admin', '超级管理员') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.roles (code, name) VALUES ('admin', '管理员') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.roles (code, name) VALUES ('manager', '经理') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.roles (code, name) VALUES ('viewer', '观察员') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.roles (code, name) VALUES ('user', '普通用户') ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO iam.permissions (code, name) VALUES ('data.sync.execute', '执行数据同步') ON CONFLICT (code) DO NOTHING;
@@ -244,8 +268,18 @@ INSERT INTO iam.permissions (code, name) VALUES ('admin.stock.write', '管理股
 INSERT INTO iam.permissions (code, name) VALUES ('admin.index.write', '管理指数') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.permissions (code, name) VALUES ('iam.manage', '管理账号与权限') ON CONFLICT (code) DO NOTHING;
 
+-- Grant permissions to Admin role (excluding IAM management which is restricted to Super Admin logically, though granted here for compatibility)
+-- Note: Super Admin permissions are handled via code logic (hasRole 'super_admin') or explicit grants if needed.
+-- Here we grant standard admin permissions.
 INSERT INTO iam.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM iam.roles r, iam.permissions p
 WHERE r.code = 'admin' AND p.code IN ('data.sync.execute', 'admin.stock.write', 'admin.index.write', 'iam.manage')
+ON CONFLICT DO NOTHING;
+
+-- Grant all permissions to Super Admin explicitly
+INSERT INTO iam.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM iam.roles r, iam.permissions p
+WHERE r.code = 'super_admin'
 ON CONFLICT DO NOTHING;

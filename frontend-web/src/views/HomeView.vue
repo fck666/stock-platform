@@ -2,13 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
-import { type BarDto, getIndexBars, getIndexIndicators, syncPrices, type IndicatorsResponseDto } from '../api/market'
+import { type BarDto, getIndexBars, getIndexIndicators, getLongestStreakForSymbol, syncPrices, type IndicatorsResponseDto, type StreakRankItemDto } from '../api/market'
 
 const loading = ref(false)
 const syncing = ref(false)
 const bars = ref<BarDto[]>([])
 const indicators = ref<IndicatorsResponseDto | null>(null)
 const indicatorLoading = ref(false)
+const streakLoading = ref(false)
+const streakUp = ref<StreakRankItemDto | null>(null)
+const streakDown = ref<StreakRankItemDto | null>(null)
 
 const indices = [
   { symbol: '^SPX', name: 'S&P 500' },
@@ -71,6 +74,7 @@ async function load() {
       end.value || undefined
     )
     await loadIndicators()
+    await loadStreaks()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
   } finally {
@@ -133,6 +137,35 @@ function saveIndicatorConfig() {
 
 watch(activeIndex, load)
 watch(interval, load)
+
+async function loadStreaks() {
+  const itv = interval.value === '1d' || interval.value === '1w' || interval.value === '1m' ? interval.value : '1d'
+  streakLoading.value = true
+  try {
+    const [up, down] = await Promise.all([
+      getLongestStreakForSymbol(activeIndex.value, {
+        interval: itv,
+        direction: 'up',
+        start: start.value || undefined,
+        end: end.value || undefined,
+      }),
+      getLongestStreakForSymbol(activeIndex.value, {
+        interval: itv,
+        direction: 'down',
+        start: start.value || undefined,
+        end: end.value || undefined,
+      }),
+    ])
+    streakUp.value = up
+    streakDown.value = down
+  } catch {
+    streakUp.value = null
+    streakDown.value = null
+  } finally {
+    streakLoading.value = false
+  }
+}
+
 
 watch(
   () => [selectedMas.value, selectedSubIndicators.value],
@@ -285,6 +318,41 @@ onBeforeUnmount(() => {
           :macd="macdSeries"
           :kdj="kdjSeries"
         />
+      </div>
+      <div style="padding: 12px">
+        <el-card shadow="never" style="border-radius: 12px" v-loading="streakLoading">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+            <div style="font-weight: 700">连涨/连跌（范围内最长）</div>
+            <el-button size="small" @click="loadStreaks" :loading="streakLoading">刷新</el-button>
+          </div>
+          <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+            统计口径：相邻两根K线收盘价比较，连续上涨/下跌的周期数（不含平盘）。
+          </div>
+          <el-row :gutter="12" style="margin-top: 12px">
+            <el-col :span="12">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+                <div class="text-muted" style="font-size: 12px">最长连涨</div>
+                <div style="font-size: 22px; font-weight: 800; margin-top: 6px; color: var(--app-success)">
+                  {{ streakUp?.streak ?? '-' }}
+                </div>
+                <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+                  {{ streakUp?.startDate || '-' }} → {{ streakUp?.endDate || '-' }}
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="12">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+                <div class="text-muted" style="font-size: 12px">最长连跌</div>
+                <div style="font-size: 22px; font-weight: 800; margin-top: 6px; color: var(--app-danger)">
+                  {{ streakDown?.streak ?? '-' }}
+                </div>
+                <div class="text-muted" style="font-size: 12px; margin-top: 6px">
+                  {{ streakDown?.startDate || '-' }} → {{ streakDown?.endDate || '-' }}
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+        </el-card>
       </div>
     </el-card>
   </el-space>

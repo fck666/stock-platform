@@ -6,6 +6,7 @@ public record LoginRequestDto(
         @NotBlank
         String username,
         @NotBlank
-        String password
+        String password,
+        String clientType
 ) {
 }

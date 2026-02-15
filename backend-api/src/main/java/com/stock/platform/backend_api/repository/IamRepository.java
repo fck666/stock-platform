@@ -66,7 +66,7 @@ public class IamRepository {
 
     public Optional<PasswordIdentity> findPasswordIdentityByUsername(String username) {
         String sql = """
-                select i.user_id, u.username, i.password_hash
+                select i.user_id, u.username, u.status, i.password_hash
                 from iam.identities i
                 join iam.users u on u.id = i.user_id
                 where i.provider = 'password'
@@ -78,6 +78,7 @@ public class IamRepository {
                 (rs, i) -> new PasswordIdentity(
                         UUID.fromString(rs.getString("user_id")),
                         rs.getString("username"),
+                        rs.getString("status"),
                         rs.getString("password_hash")
                 )
         );
@@ -159,18 +160,82 @@ public class IamRepository {
         return jdbc.queryForList(sql, new MapSqlParameterSource("userId", userId), String.class);
     }
 
-    public void insertRefreshToken(UUID userId, String tokenHash, Instant expiresAt) {
+    public void insertRefreshToken(UUID userId, String tokenHash, Instant expiresAt, String clientType) {
         String sql = """
-                insert into iam.refresh_tokens (user_id, token_hash, expires_at)
-                values (:userId, :tokenHash, :expiresAt)
+                insert into iam.refresh_tokens (user_id, token_hash, expires_at, client_type)
+                values (:userId, :tokenHash, :expiresAt, :clientType)
                 """;
         jdbc.update(sql, new MapSqlParameterSource()
                 .addValue("userId", userId)
                 .addValue("tokenHash", tokenHash)
                 .addValue("expiresAt", Timestamp.from(expiresAt))
+                .addValue("clientType", clientType)
         );
     }
 
+    public void revokeActiveRefreshTokens(UUID userId, String clientType) {
+        String sql = """
+                update iam.refresh_tokens
+                set revoked_at = now()
+                where user_id = :userId
+                  and client_type = :clientType
+                  and revoked_at is null
+                  and expires_at > now()
+                """;
+        jdbc.update(sql, new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("clientType", clientType)
+        );
+    }
+
+    public void insertAuditLog(UUID actorId, String actorUsername, UUID targetId, String targetUsername, String action, String details, String ip, String ua) {
+        String sql = """
+                insert into iam.audit_logs (actor_id, actor_username, target_id, target_username, action, details, ip_address, user_agent)
+                values (:actorId, :actorUsername, :targetId, :targetUsername, :action, to_jsonb(:details), :ip, :ua)
+                """;
+        jdbc.update(sql, new MapSqlParameterSource()
+                .addValue("actorId", actorId)
+                .addValue("actorUsername", actorUsername)
+                .addValue("targetId", targetId)
+                .addValue("targetUsername", targetUsername)
+                .addValue("action", action)
+                .addValue("details", details)
+                .addValue("ip", ip)
+                .addValue("ua", ua)
+        );
+    }
+
+    public long countSuperAdmins() {
+        String sql = """
+                select count(distinct u.id)
+                from iam.users u
+                join iam.user_roles ur on ur.user_id = u.id
+                join iam.roles r on r.id = ur.role_id
+                where r.code = 'super_admin'
+                  and u.status = 'active'
+                """;
+        Long count = jdbc.queryForObject(sql, new MapSqlParameterSource(), Long.class);
+        return count != null ? count : 0;
+    }
+
+    public void updateUserStatus(UUID userId, String status) {
+        String sql = """
+                update iam.users
+                set status = :status, updated_at = now()
+                where id = :userId
+                """;
+        jdbc.update(sql, new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("status", status)
+        );
+    }
+
+    public void deleteUser(UUID userId) {
+        // Cascade delete will handle related tables, but let's be safe and rely on FK cascade
+        String sql = "delete from iam.users where id = :userId";
+        jdbc.update(sql, new MapSqlParameterSource("userId", userId));
+    }
+    
     public Optional<RefreshTokenRecord> findValidRefreshToken(String tokenHash, Instant now) {
         String sql = """
                 select id, user_id, expires_at
@@ -207,6 +272,7 @@ public class IamRepository {
                 select id, username
                 from iam.users
                 where id = :id
+                  and status = 'active'
                 """;
         List<AuthUser> rows = jdbc.query(
                 sql,
@@ -218,11 +284,11 @@ public class IamRepository {
 
     public List<UserWithRoles> listUsers() {
         String sql = """
-                select u.id, u.username, coalesce(string_agg(r.code, ',' order by r.code), '') as roles
+                select u.id, u.username, u.status, coalesce(string_agg(r.code, ',' order by r.code), '') as roles
                 from iam.users u
                 left join iam.user_roles ur on ur.user_id = u.id
                 left join iam.roles r on r.id = ur.role_id
-                group by u.id, u.username
+                group by u.id, u.username, u.status
                 order by u.username
                 """;
         return jdbc.query(sql, new MapSqlParameterSource(), (rs, i) -> {
@@ -230,7 +296,7 @@ public class IamRepository {
             List<String> roles = rolesCsv == null || rolesCsv.isBlank()
                     ? List.of()
                     : Arrays.stream(rolesCsv.split(",")).filter(s -> !s.isBlank()).toList();
-            return new UserWithRoles(UUID.fromString(rs.getString("id")), rs.getString("username"), roles);
+            return new UserWithRoles(UUID.fromString(rs.getString("id")), rs.getString("username"), rs.getString("status"), roles);
         });
     }
 
@@ -289,15 +355,39 @@ public class IamRepository {
     public record UserRecord(UUID id, String username) {
     }
 
-    public record UserWithRoles(UUID userId, String username, List<String> roles) {
+    public record UserWithRoles(UUID userId, String username, String status, List<String> roles) {
     }
 
     public record RoleWithPermissions(String code, String name, List<String> permissions) {
     }
 
-    public record PasswordIdentity(UUID userId, String username, String passwordHash) {
+    public record PasswordIdentity(UUID userId, String username, String status, String passwordHash) {
     }
 
     public record RefreshTokenRecord(UUID id, UUID userId, Instant expiresAt) {
+    }
+
+    public List<AuditLogRecord> listAuditLogs(int limit) {
+        String sql = """
+                select id, actor_id, actor_username, target_id, target_username, action, details::text as details, ip_address, user_agent, created_at
+                from iam.audit_logs
+                order by created_at desc
+                limit :limit
+                """;
+        return jdbc.query(sql, new MapSqlParameterSource("limit", limit), (rs, i) -> new AuditLogRecord(
+                UUID.fromString(rs.getString("id")),
+                rs.getString("actor_id") == null ? null : UUID.fromString(rs.getString("actor_id")),
+                rs.getString("actor_username"),
+                rs.getString("target_id") == null ? null : UUID.fromString(rs.getString("target_id")),
+                rs.getString("target_username"),
+                rs.getString("action"),
+                rs.getString("details"),
+                rs.getString("ip_address"),
+                rs.getString("user_agent"),
+                rs.getTimestamp("created_at").toInstant()
+        ));
+    }
+
+    public record AuditLogRecord(UUID id, UUID actorId, String actorUsername, UUID targetId, String targetUsername, String action, String details, String ipAddress, String userAgent, Instant createdAt) {
     }
 }

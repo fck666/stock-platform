@@ -519,7 +519,7 @@ function render() {
   if (!chart || !elRef.value) return
   chart.setOption(buildOption(props.bars, props.title), {
     notMerge: false,
-    replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom'],
+    replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom', 'graphic'],
   })
 }
 

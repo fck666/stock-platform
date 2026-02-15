@@ -32,7 +32,7 @@ public class AuthController {
      */
     @PostMapping("/login")
     public TokenResponseDto login(@Valid @RequestBody LoginRequestDto req) {
-        var tokens = auth.loginWithPassword(req.username().trim(), req.password());
+        var tokens = auth.loginWithPassword(req.username().trim(), req.password(), req.clientType());
         return new TokenResponseDto(tokens.accessToken(), tokens.refreshToken());
     }
 
