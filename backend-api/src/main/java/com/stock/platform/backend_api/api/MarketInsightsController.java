@@ -32,6 +32,18 @@ public class MarketInsightsController {
         return market.getBreadthSnapshot(idx, multiple);
     }
 
+    @GetMapping("/breadth/detail")
+    public List<ScreenerItemDto> getBreadthDetail(
+            @RequestParam(defaultValue = "^SPX") String index,
+            @RequestParam String metric,
+            @RequestParam(defaultValue = "2.0") double volumeSurgeMultiple
+    ) {
+        String idx = index == null ? "^SPX" : index.trim().toUpperCase();
+        String m = metric == null ? "" : metric.trim().toLowerCase();
+        double multiple = Math.max(1.0, Math.min(volumeSurgeMultiple, 20.0));
+        return market.getBreadthDetail(idx, m, multiple);
+    }
+
     @GetMapping("/screener")
     public List<ScreenerItemDto> screener(
             @RequestParam(defaultValue = "^SPX") String index,

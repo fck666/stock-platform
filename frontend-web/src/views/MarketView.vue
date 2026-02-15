@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import {
   getBreadth,
+  getBreadthDetail,
   getRelativeStrengthRank,
   listIndices,
   rankFactors,
@@ -17,6 +19,7 @@ import {
   type StreakRankItemDto,
 } from '../api/market'
 
+const router = useRouter()
 const loadingIndices = ref(false)
 const indices = ref<IndexListItemDto[]>([])
 const activeIndex = ref('^SPX')
@@ -48,6 +51,11 @@ const factorRows = ref<FactorRankItemDto[]>([])
 const rsRequireAboveMa50 = ref(true)
 
 const breadth = ref<BreadthSnapshotDto | null>(null)
+
+const breadthDetailVisible = ref(false)
+const breadthDetailLoading = ref(false)
+const breadthDetailTitle = ref('')
+const breadthDetailRows = ref<ScreenerItemDto[]>([])
 
 const lookbackOptions = [
   { label: '3个月 (63)', value: 63 },
@@ -208,6 +216,27 @@ onMounted(async () => {
   await loadIndices()
   await refreshScreener()
 })
+
+function handleRowClick(row: any) {
+  router.push(`/stocks/${row.symbol}`)
+}
+
+async function showBreadthDetail(metric: string, title: string) {
+  breadthDetailTitle.value = title
+  breadthDetailVisible.value = true
+  breadthDetailLoading.value = true
+  breadthDetailRows.value = []
+  try {
+    breadthDetailRows.value = await getBreadthDetail({
+      index: activeIndex.value,
+      metric,
+    })
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message ?? e?.message ?? '加载失败')
+  } finally {
+    breadthDetailLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -410,7 +439,8 @@ onMounted(async () => {
               v-loading="screenerLoading"
               :data="screenerRows"
               row-key="symbol"
-              style="width: 100%; margin-top: 12px"
+              style="width: 100%; margin-top: 12px; cursor: pointer"
+              @row-click="handleRowClick"
             >
               <el-table-column prop="symbol" label="代码" width="110" />
               <el-table-column prop="name" label="名称" min-width="220" show-overflow-tooltip />
@@ -441,7 +471,8 @@ onMounted(async () => {
               v-loading="screenerLoading"
               :data="rsRankRows"
               row-key="symbol"
-              style="width: 100%; margin-top: 12px"
+              style="width: 100%; margin-top: 12px; cursor: pointer"
+              @row-click="handleRowClick"
             >
               <el-table-column prop="symbol" label="代码" width="110" />
               <el-table-column prop="name" label="名称" min-width="220" show-overflow-tooltip />
@@ -466,7 +497,8 @@ onMounted(async () => {
               v-loading="screenerLoading"
               :data="streakRows"
               row-key="symbol"
-              style="width: 100%; margin-top: 12px"
+              style="width: 100%; margin-top: 12px; cursor: pointer"
+              @row-click="handleRowClick"
             >
               <el-table-column prop="symbol" label="代码" width="110" />
               <el-table-column prop="name" label="名称" min-width="220" show-overflow-tooltip />
@@ -488,7 +520,8 @@ onMounted(async () => {
               v-loading="screenerLoading"
               :data="factorRows"
               row-key="symbol"
-              style="width: 100%; margin-top: 12px"
+              style="width: 100%; margin-top: 12px; cursor: pointer"
+              @row-click="handleRowClick"
             >
               <el-table-column prop="symbol" label="代码" width="110" />
               <el-table-column prop="name" label="名称" min-width="220" show-overflow-tooltip />
@@ -531,18 +564,19 @@ onMounted(async () => {
         <div v-else style="margin-top: 12px">
           <el-row :gutter="12">
             <el-col :span="6">
-              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)" class="clickable-card" @click="showBreadthDetail('up', '收涨')">
                 <div class="text-muted" style="font-size: 12px">收涨比例</div>
                 <div style="font-size: 22px; font-weight: 800; margin-top: 6px">
                   {{ pct(breadth?.up || 0, breadth?.membersWithData || 0) }}
                 </div>
-                <div class="text-muted" style="font-size: 12px; margin-top: 6px">
-                  上涨 {{ breadth?.up || 0 }} / 下跌 {{ breadth?.down || 0 }}
+                <div class="text-muted" style="font-size: 12px; margin-top: 6px" @click.stop>
+                  <span class="link-text" @click="showBreadthDetail('up', '上涨')">上涨 {{ breadth?.up || 0 }}</span> /
+                  <span class="link-text" @click="showBreadthDetail('down', '下跌')">下跌 {{ breadth?.down || 0 }}</span>
                 </div>
               </el-card>
             </el-col>
             <el-col :span="6">
-              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)" class="clickable-card" @click="showBreadthDetail('above_ma50', '站上 MA50')">
                 <div class="text-muted" style="font-size: 12px">站上 MA50</div>
                 <div style="font-size: 22px; font-weight: 800; margin-top: 6px">
                   {{ pct(breadth?.aboveMa50 || 0, breadth?.membersWithData || 0) }}
@@ -551,7 +585,7 @@ onMounted(async () => {
               </el-card>
             </el-col>
             <el-col :span="6">
-              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)" class="clickable-card" @click="showBreadthDetail('above_ma200', '站上 MA200')">
                 <div class="text-muted" style="font-size: 12px">站上 MA200</div>
                 <div style="font-size: 22px; font-weight: 800; margin-top: 6px">
                   {{ pct(breadth?.aboveMa200 || 0, breadth?.membersWithData || 0) }}
@@ -560,7 +594,7 @@ onMounted(async () => {
               </el-card>
             </el-col>
             <el-col :span="6">
-              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)">
+              <el-card shadow="never" style="border-radius: 12px; background: var(--el-fill-color-lighter)" class="clickable-card" @click="showBreadthDetail('volume_surge', '放量')">
                 <div class="text-muted" style="font-size: 12px">放量（≥2x 50日均量）</div>
                 <div style="font-size: 22px; font-weight: 800; margin-top: 6px">
                   {{ pct(breadth?.volumeSurge || 0, breadth?.membersWithData || 0) }}
@@ -583,11 +617,11 @@ onMounted(async () => {
             <el-col :span="8">
               <div style="font-weight: 700; margin-bottom: 8px">52周新高/新低</div>
               <div style="display: flex; gap: 16px; align-items: center">
-                <div style="flex: 1">
+                <div style="flex: 1" class="clickable-card" @click="showBreadthDetail('new_high_52w', '52周新高')">
                   <div class="text-muted" style="font-size: 12px">新高</div>
                   <div style="font-size: 20px; font-weight: 800">{{ breadth?.newHigh52w || 0 }}</div>
                 </div>
-                <div style="flex: 1">
+                <div style="flex: 1" class="clickable-card" @click="showBreadthDetail('new_low_52w', '52周新低')">
                   <div class="text-muted" style="font-size: 12px">新低</div>
                   <div style="font-size: 20px; font-weight: 800">{{ breadth?.newLow52w || 0 }}</div>
                 </div>
@@ -595,13 +629,62 @@ onMounted(async () => {
             </el-col>
             <el-col :span="8">
               <div style="font-weight: 700; margin-bottom: 8px">站上均线</div>
-              <div class="text-muted" style="font-size: 12px">MA20：{{ breadth?.aboveMa20 || 0 }}</div>
-              <div class="text-muted" style="font-size: 12px">MA50：{{ breadth?.aboveMa50 || 0 }}</div>
-              <div class="text-muted" style="font-size: 12px">MA200：{{ breadth?.aboveMa200 || 0 }}</div>
+              <div class="text-muted link-text" style="font-size: 12px" @click="showBreadthDetail('above_ma20', '站上 MA20')">MA20：{{ breadth?.aboveMa20 || 0 }}</div>
+              <div class="text-muted link-text" style="font-size: 12px" @click="showBreadthDetail('above_ma50', '站上 MA50')">MA50：{{ breadth?.aboveMa50 || 0 }}</div>
+              <div class="text-muted link-text" style="font-size: 12px" @click="showBreadthDetail('above_ma200', '站上 MA200')">MA200：{{ breadth?.aboveMa200 || 0 }}</div>
             </el-col>
           </el-row>
         </div>
       </el-card>
     </div>
+
+    <el-dialog v-model="breadthDetailVisible" :title="breadthDetailTitle" width="800px">
+      <el-table
+        :data="breadthDetailRows"
+        v-loading="breadthDetailLoading"
+        style="width: 100%; cursor: pointer"
+        @row-click="handleRowClick"
+      >
+        <el-table-column prop="symbol" label="代码" width="100" />
+        <el-table-column prop="name" label="名称" show-overflow-tooltip />
+        <el-table-column prop="close" label="收盘" width="100" align="right">
+          <template #default="{ row }">{{ row.close?.toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="returnPct" label="涨跌幅" width="100" align="right">
+          <template #default="{ row }">
+            <span :class="row.returnPct > 0 ? 'text-success' : row.returnPct < 0 ? 'text-danger' : ''">
+              {{ row.returnPct != null ? (row.returnPct * 100).toFixed(2) + '%' : '-' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="volume" label="成交量" width="120" align="right">
+          <template #default="{ row }">{{ row.volume?.toLocaleString() }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </el-space>
 </template>
+
+<style scoped>
+.text-success {
+  color: var(--app-success);
+}
+.text-danger {
+  color: var(--app-danger);
+}
+.clickable-card {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.clickable-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+.link-text {
+  cursor: pointer;
+}
+.link-text:hover {
+  text-decoration: underline;
+  color: var(--el-color-primary);
+}
+</style>

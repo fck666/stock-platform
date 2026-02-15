@@ -21,6 +21,7 @@ router.beforeEach((to) => {
   if (to.path === '/login') return true
   const required = (to.meta as any)?.requiresPermission as string | undefined
   if (!required) return true
+  if (!auth.ready.value) return true
   if (!auth.isLoggedIn.value) {
     return { path: '/login', query: { next: to.fullPath } }
   }

@@ -159,6 +159,20 @@ public class DataCollectorService {
 
             Map<String, String> env = pb.environment();
             env.putIfAbsent("DB_DSN", buildDbDsnFromSpringDatasource());
+            if (dc != null) {
+                if (dc.priceProvider() != null && !dc.priceProvider().isBlank()) {
+                    env.putIfAbsent("PRICE_PROVIDER", dc.priceProvider());
+                }
+                if (dc.metadataProvider() != null && !dc.metadataProvider().isBlank()) {
+                    env.putIfAbsent("METADATA_PROVIDER", dc.metadataProvider());
+                }
+                if (dc.eodhdApiToken() != null && !dc.eodhdApiToken().isBlank()) {
+                    env.putIfAbsent("EODHD_API_TOKEN", dc.eodhdApiToken());
+                }
+                if (dc.eodhdUseForSpx() != null) {
+                    env.putIfAbsent("EODHD_USE_FOR_SPX", dc.eodhdUseForSpx().toString());
+                }
+            }
 
             Process p = pb.start();
 

@@ -17,6 +17,7 @@ from collectors.eodhd import (
     canonical_to_eodhd_symbol,
     fetch_eodhd_dividends,
     fetch_eodhd_fundamentals,
+    fetch_eodhd_prices_range,
     fetch_eodhd_splits,
 )
 from collectors.yahoo_finance import (
@@ -35,13 +36,13 @@ log = logging.getLogger(__name__)
 
 
 DEFAULT_INDICES: dict[str, dict[str, str]] = {
-    "^SPX": {"name": "S&P 500", "type": "INDEX", "stooq": "^spx"},
-    "^DJI": {"name": "Dow Jones Industrial", "type": "INDEX", "stooq": "^dji"},
-    "^NDQ": {"name": "Nasdaq Composite", "type": "INDEX", "stooq": "^ndq"},
-    "^HSI": {"name": "Hang Seng Index", "type": "INDEX", "stooq": "^HSI"},
-    "^HSTECH": {"name": "Hang Seng TECH Index", "type": "INDEX", "stooq": "^HSTECH"},
-    "IWM": {"name": "Russell 2000 (ETF proxy)", "type": "ETF", "stooq": "iwm.us"},
-    "VIXY": {"name": "VIX (ETF proxy)", "type": "ETF", "stooq": "vixy.us"},
+    "^SPX": {"name": "S&P 500", "type": "INDEX", "stooq": "^spx", "eodhd": "GSPC.INDX"},
+    "^DJI": {"name": "Dow Jones Industrial", "type": "INDEX", "stooq": "^dji", "eodhd": "DJI.INDX"},
+    "^NDQ": {"name": "Nasdaq Composite", "type": "INDEX", "stooq": "^ndq", "eodhd": "IXIC.INDX"},
+    "^HSI": {"name": "Hang Seng Index", "type": "INDEX", "stooq": "^HSI", "eodhd": "HSI.INDX"},
+    "^HSTECH": {"name": "Hang Seng TECH Index", "type": "INDEX", "stooq": "^HSTECH", "eodhd": "HSTECH.INDX"},
+    "IWM": {"name": "Russell 2000 (ETF proxy)", "type": "ETF", "stooq": "iwm.us", "eodhd": "IWM.US"},
+    "VIXY": {"name": "VIX (ETF proxy)", "type": "ETF", "stooq": "vixy.us", "eodhd": "VIXY.US"},
 }
 
 
@@ -62,6 +63,69 @@ def _interval_to_freq(interval: str) -> str:
     if interval not in mapping:
         raise ValueError("interval must be one of: 1d, 1w, 1m, 1q, 1y")
     return mapping[interval]
+
+
+def _get_price_provider() -> str:
+    provider = (os.getenv("PRICE_PROVIDER") or "stooq").strip().lower()
+    if provider not in {"stooq", "eodhd"}:
+        log.warning("Unknown PRICE_PROVIDER=%s, falling back to stooq", provider)
+        return "stooq"
+    if provider == "eodhd" and not (os.getenv("EODHD_API_TOKEN") or "").strip():
+        log.warning("PRICE_PROVIDER=eodhd but EODHD_API_TOKEN is not set. Falling back to stooq.")
+        return "stooq"
+    return provider
+
+
+def _resolve_index_provider_identifier(*, canonical_symbol: str, provider: str) -> str | None:
+    meta = DEFAULT_INDICES.get(canonical_symbol)
+    if not meta:
+        return None
+    if provider == "stooq":
+        return meta.get("stooq")
+    if provider == "eodhd":
+        return meta.get("eodhd") or f"{canonical_symbol.lstrip('^')}.INDX"
+    return None
+
+
+def _fetch_prices_range(
+    *,
+    session: requests.Session,
+    provider: str,
+    identifier: str,
+    start_date: date,
+    end_date: date,
+    freq: str,
+    timeout: float,
+    user_agent: str,
+) -> pd.DataFrame:
+    if provider == "stooq":
+        return fetch_prices_range(
+            session=session,
+            stooq_symbol=identifier,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+            timeout=timeout,
+            user_agent=user_agent,
+            pause_seconds=0.1,
+        )
+
+    if provider == "eodhd":
+        api_token = (os.getenv("EODHD_API_TOKEN") or "").strip()
+        if api_token == "":
+            raise RuntimeError("EODHD_API_TOKEN is required when PRICE_PROVIDER=eodhd")
+        return fetch_eodhd_prices_range(
+            session=session,
+            eodhd_symbol=identifier,
+            api_token=api_token,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+
+    raise ValueError(f"Unsupported price provider: {provider}")
 
 
 def _iter_date_ranges(start: date, end: date, max_days: int) -> Iterable[tuple[date, date]]:
@@ -527,14 +591,14 @@ def _sync_single_security_prices(
     http: requests.Session,
     security_id: int,
     canonical_symbol: str,
-    stooq_symbol: str,
+    price_provider: str,
+    provider_identifier: str,
     start: date,
     end: date,
     interval: str,
     freq: str,
     http_timeout_seconds: float,
     user_agent: str,
-    source: str = "stooq",
 ) -> int:
     """
     Syncs prices for a single security. Detects adjustments (splits/dividends)
@@ -559,15 +623,15 @@ def _sync_single_security_prices(
 
         log.info("[%s] Fetching prices from %s to %s", canonical_symbol, chunk_start, chunk_end)
         try:
-            df = fetch_prices_range(
+            df = _fetch_prices_range(
                 session=http,
-                stooq_symbol=stooq_symbol,
+                provider=price_provider,
+                identifier=provider_identifier,
                 start_date=chunk_start,
                 end_date=chunk_end,
                 freq=freq,
                 timeout=http_timeout_seconds,
                 user_agent=user_agent,
-                pause_seconds=0.1,
             )
 
             if df.empty:
@@ -606,22 +670,22 @@ def _sync_single_security_prices(
                         repo.delete_price_bars(security_id=security_id, interval=interval)
                         # Re-fetch the ENTIRE range from the absolute start
                         log.info("[%s] Resetting and fetching full history from %s", canonical_symbol, start)
-                        df = fetch_prices_range(
+                        df = _fetch_prices_range(
                             session=http,
-                            stooq_symbol=stooq_symbol,
+                            provider=price_provider,
+                            identifier=provider_identifier,
                             start_date=start,
                             end_date=end,
                             freq=freq,
                             timeout=http_timeout_seconds,
                             user_agent=user_agent,
-                            pause_seconds=0.1,
                         )
                         full_history_synced = True
         except Exception as e:
             log.warning(
                 "Failed fetching %s (%s) %s..%s: %s",
                 canonical_symbol,
-                stooq_symbol,
+                provider_identifier,
                 chunk_start,
                 chunk_end,
                 e,
@@ -631,7 +695,7 @@ def _sync_single_security_prices(
             continue
 
         if not df.empty:
-            rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source=source)
+            rows = _df_to_price_rows(df, security_id=security_id, interval=interval, source=price_provider)
             count = repo.upsert_price_bars(rows)
             bars_upserted += count
             log.info("[%s] Upserted %d bars", canonical_symbol, count)
@@ -654,6 +718,7 @@ def sync_indices_prices_to_db(
 
     bars_upserted = 0
     securities_scanned = 0
+    price_provider = _get_price_provider()
     with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
         repo = StockRepository(conn)
         repo.ensure_search_path()
@@ -665,15 +730,25 @@ def sync_indices_prices_to_db(
                 canonical_symbol=canonical_symbol,
                 name=meta["name"],
             )
-            stooq_symbol = meta["stooq"]
-            repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
+            stooq_symbol = meta.get("stooq")
+            if stooq_symbol:
+                repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_symbol)
+            eodhd_symbol = meta.get("eodhd")
+            if eodhd_symbol:
+                repo.upsert_security_identifier(security_id=security_id, provider="eodhd", identifier=eodhd_symbol)
+
+            provider_identifier = _resolve_index_provider_identifier(canonical_symbol=canonical_symbol, provider=price_provider)
+            if not provider_identifier:
+                log.warning("Missing provider identifier for %s (PRICE_PROVIDER=%s), skip.", canonical_symbol, price_provider)
+                continue
 
             bars_upserted += _sync_single_security_prices(
                 repo=repo,
                 http=http,
                 security_id=security_id,
                 canonical_symbol=canonical_symbol,
-                stooq_symbol=stooq_symbol,
+                price_provider=price_provider,
+                provider_identifier=provider_identifier,
                 start=start,
                 end=end,
                 interval=interval,
@@ -704,6 +779,7 @@ def sync_index_prices_to_db(
 
     bars_upserted = 0
     securities_scanned = 0
+    price_provider = _get_price_provider()
     with requests.Session() as http, get_connection(DbConfig(dsn=db_dsn)) as conn:
         repo = StockRepository(conn)
         repo.ensure_search_path()
@@ -724,12 +800,27 @@ def sync_index_prices_to_db(
 
         for c in constituents:
             securities_scanned += 1
+            provider_identifier: str | None = None
+            if price_provider == "stooq":
+                provider_identifier = c.stooq_symbol
+                if not provider_identifier:
+                    log.warning("Missing stooq symbol for %s, skip price sync.", c.canonical_symbol)
+                    continue
+                repo.upsert_security_identifier(security_id=c.security_id, provider="stooq", identifier=provider_identifier)
+            elif price_provider == "eodhd":
+                provider_identifier = canonical_to_eodhd_symbol(canonical_symbol=c.canonical_symbol, index_symbol=index_symbol)
+                repo.upsert_security_identifier(security_id=c.security_id, provider="eodhd", identifier=provider_identifier)
+            else:
+                log.warning("Unsupported PRICE_PROVIDER=%s, skip.", price_provider)
+                continue
+
             bars_upserted += _sync_single_security_prices(
                 repo=repo,
                 http=http,
                 security_id=c.security_id,
                 canonical_symbol=c.canonical_symbol,
-                stooq_symbol=c.stooq_symbol,
+                price_provider=price_provider,
+                provider_identifier=provider_identifier,
                 start=start,
                 end=end,
                 interval=interval,
@@ -750,15 +841,25 @@ def sync_index_prices_to_db(
                     canonical_symbol=index_symbol,
                     name=idx_meta["name"],
                 )
-                stooq_idx = idx_meta["stooq"]
-                repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_idx)
+                stooq_idx = idx_meta.get("stooq")
+                if stooq_idx:
+                    repo.upsert_security_identifier(security_id=security_id, provider="stooq", identifier=stooq_idx)
+                eodhd_idx = idx_meta.get("eodhd")
+                if eodhd_idx:
+                    repo.upsert_security_identifier(security_id=security_id, provider="eodhd", identifier=eodhd_idx)
+
+                provider_identifier = _resolve_index_provider_identifier(canonical_symbol=index_symbol, provider=price_provider)
+                if not provider_identifier:
+                    log.warning("Missing provider identifier for %s (PRICE_PROVIDER=%s), skip index bar.", index_symbol, price_provider)
+                    return PriceSyncResult(securities_scanned=securities_scanned, bars_upserted=bars_upserted)
 
                 bars_upserted += _sync_single_security_prices(
                     repo=repo,
                     http=http,
                     security_id=security_id,
                     canonical_symbol=index_symbol,
-                    stooq_symbol=stooq_idx,
+                    price_provider=price_provider,
+                    provider_identifier=provider_identifier,
                     start=start,
                     end=end,
                     interval=interval,

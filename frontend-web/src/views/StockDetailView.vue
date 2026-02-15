@@ -403,21 +403,22 @@ watch(rsIndex, () => loadRelativeStrength())
       </div>
     </el-card>
 
+    <!-- Top Section: Chart & Market Analysis -->
     <el-row :gutter="16" style="width: 100%">
-      <el-col :xs="24" :md="14">
-        <el-card shadow="never" style="border-radius: 12px" v-loading="indicatorLoading">
+      <el-col :xs="24" :md="16">
+        <el-card shadow="never" style="border-radius: 12px; margin-bottom: 16px" v-loading="indicatorLoading">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
             <div style="font-weight: 700">指标</div>
             <el-space wrap>
               <el-checkbox-group v-model="selectedMas">
-                <el-checkbox :label="20">MA20</el-checkbox>
-                <el-checkbox :label="60">MA60</el-checkbox>
-                <el-checkbox :label="180">MA180</el-checkbox>
-                <el-checkbox :label="360">MA360</el-checkbox>
+                <el-checkbox :value="20">MA20</el-checkbox>
+                <el-checkbox :value="60">MA60</el-checkbox>
+                <el-checkbox :value="180">MA180</el-checkbox>
+                <el-checkbox :value="360">MA360</el-checkbox>
               </el-checkbox-group>
               <el-checkbox-group v-model="selectedSubIndicators">
-                <el-checkbox label="macd">MACD</el-checkbox>
-                <el-checkbox label="kdj">KDJ</el-checkbox>
+                <el-checkbox value="macd">MACD</el-checkbox>
+                <el-checkbox value="kdj">KDJ</el-checkbox>
               </el-checkbox-group>
             </el-space>
           </div>
@@ -438,7 +439,7 @@ watch(rsIndex, () => loadRelativeStrength())
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="24" :md="10">
+      <el-col :xs="24" :md="8">
         <el-card shadow="never" style="border-radius: 12px; margin-bottom: 16px" v-loading="rsLoading">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
             <div style="font-weight: 700">相对强弱 (RS)</div>
@@ -497,7 +498,12 @@ watch(rsIndex, () => loadRelativeStrength())
             </el-col>
           </el-row>
         </el-card>
+      </el-col>
+    </el-row>
 
+    <!-- Bottom Section: Info & Events -->
+    <el-row :gutter="16" style="width: 100%">
+      <el-col :xs="24" :md="12">
         <el-card shadow="never" style="border-radius: 12px" v-loading="loading">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="代码">{{ detail?.symbol || symbol }}</el-descriptions-item>
@@ -521,15 +527,15 @@ watch(rsIndex, () => loadRelativeStrength())
           </el-descriptions>
         </el-card>
 
-        <el-card v-if="detail?.identifiers && detail.identifiers.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
-          <div style="font-weight: 700; margin-bottom: 8px">标识符</div>
-          <el-table :data="detail?.identifiers || []" size="small" style="width: 100%">
-            <el-table-column prop="provider" label="provider" width="120" />
-            <el-table-column prop="identifier" label="identifier" show-overflow-tooltip />
-          </el-table>
+        <el-card v-if="hasValue(detail?.wikiExtract)" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
+          <div style="font-weight: 700; margin-bottom: 8px">摘要</div>
+          <div class="text-muted" style="white-space: pre-wrap; line-height: 1.6">
+            {{ detail?.wikiExtract }}
+          </div>
         </el-card>
-
-        <el-card v-if="detail?.corporateActions && detail.corporateActions.length > 0" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
+      </el-col>
+      <el-col :xs="24" :md="12">
+        <el-card v-if="detail?.corporateActions && detail.corporateActions.length > 0" shadow="never" style="border-radius: 12px; margin-bottom: 16px" v-loading="loading">
           <div style="font-weight: 700; margin-bottom: 8px">分红与拆股</div>
           <div style="height: 320px; overflow: hidden">
             <el-table :data="corporateActionsVisible" size="small" style="width: 100%" max-height="280">
@@ -555,11 +561,12 @@ watch(rsIndex, () => loadRelativeStrength())
           </div>
         </el-card>
 
-        <el-card v-if="hasValue(detail?.wikiExtract)" shadow="never" style="border-radius: 12px; margin-top: 16px" v-loading="loading">
-          <div style="font-weight: 700; margin-bottom: 8px">摘要</div>
-          <div class="text-muted" style="white-space: pre-wrap; line-height: 1.6">
-            {{ detail?.wikiExtract }}
-          </div>
+        <el-card v-if="detail?.identifiers && detail.identifiers.length > 0" shadow="never" style="border-radius: 12px" v-loading="loading">
+          <div style="font-weight: 700; margin-bottom: 8px">标识符</div>
+          <el-table :data="detail?.identifiers || []" size="small" style="width: 100%">
+            <el-table-column prop="provider" label="provider" width="120" />
+            <el-table-column prop="identifier" label="identifier" show-overflow-tooltip />
+          </el-table>
         </el-card>
       </el-col>
     </el-row>

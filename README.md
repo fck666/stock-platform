@@ -150,10 +150,65 @@ python3 -m venv venv
 
 data-collector 使用 `DB_DSN`（形如 `postgresql://user:pass@host:port/db`）。当由后端触发时，会尝试根据后端的 `spring.datasource.*` 自动拼装并注入该环境变量。
 
+### 数据源配置（行情 / 基本面）
+
+data-collector 支持通过环境变量切换数据源；当由后端触发时，可通过后端的 `app.data-collector.*` 配置项（或对应环境变量）透传给采集器进程。
+
+- 行情（K 线）：`PRICE_PROVIDER=stooq|eodhd`（默认 `stooq`）
+- 基本面/公司行为（fundamentals/dividends/splits）：`METADATA_PROVIDER=auto|yahoo|eodhd`（默认 `auto`）
+- EODHD Token：`EODHD_API_TOKEN=...`（留空则 EODHD 相关能力会自动回退）
+- 仅在 `METADATA_PROVIDER=auto` 时生效：`EODHD_USE_FOR_SPX=true|false`（默认 `false`，控制 SPX 是否也优先使用 EODHD）
+
+后端环境变量（推荐在 Docker / 部署时使用）：
+
+```bash
+DATA_COLLECTOR_PRICE_PROVIDER=stooq|eodhd
+DATA_COLLECTOR_METADATA_PROVIDER=auto|yahoo|eodhd
+EODHD_API_TOKEN=...
+EODHD_USE_FOR_SPX=false
+```
+
+直接运行 data-collector 时也可使用同名变量：
+
+```bash
+export PRICE_PROVIDER=stooq
+export METADATA_PROVIDER=auto
+export EODHD_API_TOKEN=
+export EODHD_USE_FOR_SPX=false
+```
+
+### 权限管理配置（JWT / 管理员 / 免登）
+
+这些配置通过后端环境变量（或 `application.yaml`）生效，适用于 `docker/app/.env.prod.example` 或本地开发。
+
+#### 1. JWT 认证
+
+- `SECURITY_JWT_SECRET`：JWT 签名密钥（必须 ≥ 32 字符）。**生产环境必须设置固定值**，否则每次重启后端都会导致旧 Token 失效。
+- `SECURITY_JWT_ACCESS_TTL_SECONDS`：Access Token 有效期（秒），默认 1800（30分钟）。
+- `SECURITY_JWT_REFRESH_TTL_SECONDS`：Refresh Token 有效期（秒），默认 2592000（30天）。
+
+#### 2. 初始化管理员（Bootstrapping）
+
+后端启动时可自动检查并创建/更新初始管理员账号（密码不写入代码库）。
+
+- `INIT_ADMIN_USERNAME`：管理员用户名（例如 `admin`）。
+- `INIT_ADMIN_PASSWORD`：管理员密码（例如 `ChangeMe123!`）。
+- `INIT_ADMIN_FORCE_RESET_PASSWORD`：`true` | `false`（默认 `false`）。
+  - 若为 `true`，每次启动都会强制把该用户的密码重置为 `INIT_ADMIN_PASSWORD`（慎用）。
+  - 若为 `false`，仅当该用户**从未设置过密码**（即首次创建）时才设置密码。
+
+#### 3. 测试环境免登（Dev/Test Only）
+
+**仅建议在本地或内网测试环境开启**。开启后，若请求未携带 Authorization 头，后端会自动注入指定的身份，前端也会自动识别为已登录。
+
+- `SECURITY_DEV_AUTH_ENABLED`：`true` | `false`（默认 `false`）。
+- `SECURITY_DEV_AUTH_USERNAME`：免登时模拟的用户名（默认 `dev_admin`）。
+- `SECURITY_DEV_AUTH_ROLES`：免登时模拟的角色（逗号分隔，默认 `admin`）。
+- `SECURITY_DEV_AUTH_AUTO_CREATE_USER`：`true` | `false`（默认 `true`）。若模拟的用户不存在，是否自动创建并授权。
+
 ## 常见问题
 
 - 后端触发同步时报 `DATA_COLLECTOR_WORKING_DIR is not configured`
   - 设置 `DATA_COLLECTOR_WORKING_DIR=../data-collector`（本地）或 `DATA_COLLECTOR_ENABLED=false`（不使用采集器）
 - token 重启后失效
   - 配置固定的 `SECURITY_JWT_SECRET`（长度建议 ≥ 32 字符），避免随机生成 key
-

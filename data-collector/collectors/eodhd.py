@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import date
 
+import pandas as pd
 import requests
 
 log = logging.getLogger(__name__)
@@ -302,3 +303,66 @@ def fetch_eodhd_fundamentals(
         currency=currency,
         raw_payload=payload_obj,
     )
+
+
+def fetch_eodhd_prices_range(
+    *,
+    session: requests.Session,
+    eodhd_symbol: str,
+    api_token: str,
+    start_date: date,
+    end_date: date,
+    freq: str = "d",
+    timeout: float = 30,
+    user_agent: str = "stock-platform-data-collector/0.1",
+) -> pd.DataFrame:
+    freq_map = {"d": "d", "w": "w", "m": "m"}
+    period = freq_map.get(freq)
+    if period is None:
+        raise ValueError("freq must be one of: d, w, m")
+
+    params = [
+        f"api_token={api_token}",
+        "fmt=json",
+        f"from={start_date.isoformat()}",
+        f"to={end_date.isoformat()}",
+        f"period={period}",
+    ]
+    url = f"https://eodhd.com/api/eod/{eodhd_symbol}?" + "&".join(params)
+    payload = _request_json(session, url, timeout=timeout, user_agent=user_agent)
+
+    if isinstance(payload, dict) and payload.get("code") and payload.get("message"):
+        raise RuntimeError(f"EODHD prices error for {eodhd_symbol}: {payload}")
+    if not isinstance(payload, list):
+        raise RuntimeError(f"Unexpected EODHD prices payload for {eodhd_symbol}: {type(payload)}")
+
+    rows: list[dict] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        d = item.get("date")
+        if not d:
+            continue
+        rows.append(
+            {
+                "date": d,
+                "open": item.get("open"),
+                "high": item.get("high"),
+                "low": item.get("low"),
+                "close": item.get("close"),
+                "volume": item.get("volume"),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"])
+
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).copy()
+    for c in ("open", "high", "low", "close", "volume"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values("date").reset_index(drop=True)
+    df["symbol"] = eodhd_symbol
+    return df.reset_index(drop=True)

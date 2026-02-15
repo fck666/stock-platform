@@ -17,16 +17,14 @@ export const auth = {
   },
   async init() {
     const refreshToken = getRefreshToken()
-    if (!refreshToken) {
-      readyRef.value = true
-      return
-    }
     try {
-      const tokens = await apiRefresh(refreshToken)
-      setTokens(tokens.accessToken, tokens.refreshToken)
-      meRef.value = await apiMe()
+      if (refreshToken) {
+        const tokens = await apiRefresh(refreshToken)
+        setTokens(tokens.accessToken, tokens.refreshToken)
+        meRef.value = await apiMe()
+      }
     } catch {
-      clearTokens()
+      if (refreshToken) clearTokens()
       meRef.value = null
     } finally {
       readyRef.value = true
@@ -53,4 +51,3 @@ export const auth = {
     return meRef.value
   },
 }
-

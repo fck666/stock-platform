@@ -12,6 +12,7 @@ class JwtServiceTest {
     void roundTripAccessToken() {
         SecurityProperties props = new SecurityProperties(
                 new SecurityProperties.Jwt("0123456789abcdef0123456789abcdef", 60, 3600),
+                null,
                 null
         );
         JwtService jwt = new JwtService(props);

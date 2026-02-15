@@ -282,6 +282,11 @@ export async function getBreadth(index: string) {
   return res.data
 }
 
+export async function getBreadthDetail(params: { index: string; metric: string; volumeSurgeMultiple?: number }) {
+  const res = await http.get<ScreenerItemDto[]>('/api/market/breadth/detail', { params })
+  return res.data
+}
+
 export async function runScreener(params: { index: string; preset: string; lookbackDays: number; limit: number }) {
   const res = await http.get<ScreenerItemDto[]>('/api/market/screener', { params })
   return res.data

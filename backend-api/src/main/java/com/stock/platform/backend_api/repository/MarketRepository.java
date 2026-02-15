@@ -428,7 +428,7 @@ public class MarketRepository {
         String st = status == null || status.isBlank() ? null : status.trim().toUpperCase(Locale.ROOT);
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("profileId", profileId)
-                .addValue("status", st);
+                .addValue("status", st, java.sql.Types.VARCHAR);
         record Row(
                 long id,
                 String symbol,
@@ -1197,6 +1197,113 @@ public class MarketRepository {
                 c.newHigh52w(),
                 c.newLow52w(),
                 c.volumeSurge()
+        );
+    }
+
+    public List<ScreenerItemDto> getBreadthDetail(String indexSymbol, String metric, double volumeSurgeMultiple) {
+        requireIndexId(indexSymbol);
+        LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
+        if (asOf == null) {
+            return List.of();
+        }
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("indexSymbol", indexSymbol)
+                .addValue("asOf", asOf)
+                .addValue("volumeMultiple", volumeSurgeMultiple);
+
+        String condition = "1=0";
+        if ("up".equalsIgnoreCase(metric)) condition = "l.prev_close is not null and l.close > l.prev_close";
+        else if ("down".equalsIgnoreCase(metric)) condition = "l.prev_close is not null and l.close < l.prev_close";
+        else if ("flat".equalsIgnoreCase(metric)) condition = "l.prev_close is not null and l.close = l.prev_close";
+        else if ("above_ma20".equalsIgnoreCase(metric)) condition = "l.ma20 is not null and l.close > l.ma20";
+        else if ("above_ma50".equalsIgnoreCase(metric)) condition = "l.ma50 is not null and l.close > l.ma50";
+        else if ("above_ma200".equalsIgnoreCase(metric)) condition = "l.ma200 is not null and l.close > l.ma200";
+        else if ("new_high_52w".equalsIgnoreCase(metric)) condition = "l.high252 is not null and l.close >= l.high252";
+        else if ("new_low_52w".equalsIgnoreCase(metric)) condition = "l.low252 is not null and l.close <= l.low252";
+        else if ("volume_surge".equalsIgnoreCase(metric)) condition = "l.vma50 is not null and l.volume is not null and l.volume >= l.vma50 * :volumeMultiple";
+
+        return jdbc.query(
+                """
+                with idx as (
+                    select id as index_id
+                    from market.security
+                    where security_type = 'INDEX' and canonical_symbol = :indexSymbol
+                ),
+                members as (
+                    select m.security_id
+                    from market.index_membership m
+                    join idx on idx.index_id = m.index_id
+                    where m.as_of_date = :asOf
+                ),
+                as_of_bar as (
+                    select max(pb.bar_date) as bar_date
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    where pb.interval = '1d'
+                ),
+                bars as (
+                    select
+                        pb.security_id,
+                        pb.bar_date,
+                        pb.close,
+                        pb.volume,
+                        lag(pb.close) over(partition by pb.security_id order by pb.bar_date) as prev_close,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 19 preceding and current row) as ma20,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as ma50,
+                        avg(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 199 preceding and current row) as ma200,
+                        max(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 251 preceding and current row) as high252,
+                        min(pb.close) over(partition by pb.security_id order by pb.bar_date rows between 251 preceding and current row) as low252,
+                        avg(pb.volume) over(partition by pb.security_id order by pb.bar_date rows between 49 preceding and current row) as vma50
+                    from market.price_bar pb
+                    join members mem on mem.security_id = pb.security_id
+                    join as_of_bar a on pb.bar_date <= a.bar_date
+                    where pb.interval = '1d'
+                      and pb.bar_date >= (select bar_date from as_of_bar) - interval '400 days'
+                ),
+                latest as (
+                    select distinct on (security_id)
+                        security_id,
+                        bar_date,
+                        close,
+                        volume,
+                        prev_close,
+                        ma20,
+                        ma50,
+                        ma200,
+                        high252,
+                        low252,
+                        vma50,
+                        (bar_date = (select bar_date from as_of_bar)) as has_today
+                    from bars
+                    order by security_id, bar_date desc
+                )
+                select
+                    s.canonical_symbol as symbol,
+                    s.name as name,
+                    to_char(l.bar_date, 'YYYY-MM-DD') as as_of_date,
+                    l.close as close,
+                    case when l.prev_close is null or l.prev_close = 0 then null else ((l.close / l.prev_close) - 1.0) end as return_pct,
+                    l.ma50 as ma50,
+                    l.ma200 as ma200,
+                    l.volume as volume
+                from latest l
+                join market.security s on s.id = l.security_id and s.security_type = 'STOCK'
+                where l.has_today
+                  and (%s)
+                order by return_pct desc nulls last
+                """.formatted(condition),
+                params,
+                (rs, rowNum) -> new ScreenerItemDto(
+                        rs.getString("symbol"),
+                        rs.getString("name"),
+                        rs.getString("as_of_date"),
+                        rs.getObject("close") == null ? null : rs.getBigDecimal("close").doubleValue(),
+                        rs.getObject("return_pct") == null ? null : rs.getBigDecimal("return_pct").doubleValue(),
+                        rs.getObject("ma50") == null ? null : rs.getBigDecimal("ma50").doubleValue(),
+                        rs.getObject("ma200") == null ? null : rs.getBigDecimal("ma200").doubleValue(),
+                        rs.getObject("volume") == null ? null : rs.getLong("volume")
+                )
         );
     }
 

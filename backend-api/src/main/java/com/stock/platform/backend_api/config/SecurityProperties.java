@@ -5,7 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "security")
 public record SecurityProperties(
         Jwt jwt,
-        InitAdmin initAdmin
+        InitAdmin initAdmin,
+        DevAuth devAuth
 ) {
     public record Jwt(
             String secret,
@@ -18,6 +19,15 @@ public record SecurityProperties(
             String username,
             String password,
             boolean forceResetPassword
+    ) {
+    }
+
+    public record DevAuth(
+            boolean enabled,
+            String username,
+            String roles,
+            boolean autoCreateUser,
+            boolean onlyIfMissingAuthorization
     ) {
     }
 }

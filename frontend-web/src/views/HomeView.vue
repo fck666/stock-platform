@@ -262,14 +262,14 @@ onBeforeUnmount(() => {
             <div style="font-weight: 700">指标</div>
             <el-space wrap>
               <el-checkbox-group v-model="selectedMas">
-                <el-checkbox :label="20">MA20</el-checkbox>
-                <el-checkbox :label="60">MA60</el-checkbox>
-                <el-checkbox :label="180">MA180</el-checkbox>
-                <el-checkbox :label="360">MA360</el-checkbox>
+                <el-checkbox :value="20">MA20</el-checkbox>
+                <el-checkbox :value="60">MA60</el-checkbox>
+                <el-checkbox :value="180">MA180</el-checkbox>
+                <el-checkbox :value="360">MA360</el-checkbox>
               </el-checkbox-group>
               <el-checkbox-group v-model="selectedSubIndicators">
-                <el-checkbox label="macd">MACD</el-checkbox>
-                <el-checkbox label="kdj">KDJ</el-checkbox>
+                <el-checkbox value="macd">MACD</el-checkbox>
+                <el-checkbox value="kdj">KDJ</el-checkbox>
               </el-checkbox-group>
             </el-space>
           </div>
