@@ -469,6 +469,7 @@ watch(rsIndex, () => loadRelativeStrength())
               :sub-indicators="selectedSubIndicators"
               :macd="macdSeries"
               :kdj="kdjSeries"
+              :loading="loading || indicatorLoading"
             />
           </div>
         </el-card>

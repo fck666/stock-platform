@@ -29,6 +29,7 @@ const props = defineProps<{
   subIndicators?: Array<'macd' | 'kdj'>
   macd?: { dif: Array<number | null>; dea: Array<number | null>; hist: Array<number | null> } | null
   kdj?: { k: Array<number | null>; d: Array<number | null>; j: Array<number | null> } | null
+  loading?: boolean
 }>()
 
 const elRef = ref<HTMLDivElement | null>(null)
@@ -516,7 +517,10 @@ function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
 
 function render() {
   if (!chart || !elRef.value) return
-  chart.setOption(buildOption(props.bars, props.title), true)
+  chart.setOption(buildOption(props.bars, props.title), {
+    notMerge: false,
+    replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom'],
+  })
 }
 
 onMounted(() => {
@@ -545,12 +549,39 @@ onMounted(() => {
   elRef.value.addEventListener('pointermove', onPointerMove)
   elRef.value.addEventListener('pointerup', onPointerUp)
   elRef.value.addEventListener('pointercancel', onPointerUp)
+  if (props.loading) {
+    chart.showLoading({
+      text: '',
+      color: cssVar('--app-accent', '#5b8ff9'),
+      textColor: cssVar('--el-text-color-primary', '#333'),
+      maskColor: 'rgba(255, 255, 255, 0.4)',
+      zlevel: 0,
+    })
+  }
   render()
   const onResize = () => chart?.resize()
   window.addEventListener('resize', onResize)
   onThemeChange = () => render()
   window.addEventListener('themechange', onThemeChange)
-  onBeforeUnmount(() => {
+  watch(
+  () => props.loading,
+  (val) => {
+    if (!chart) return
+    if (val) {
+      chart.showLoading({
+        text: '',
+        color: cssVar('--app-accent', '#5b8ff9'),
+        textColor: cssVar('--el-text-color-primary', '#333'),
+        maskColor: 'rgba(255, 255, 255, 0.4)',
+        zlevel: 0,
+      })
+    } else {
+      chart.hideLoading()
+    }
+  },
+)
+
+onBeforeUnmount(() => {
     window.removeEventListener('resize', onResize)
     if (onThemeChange) window.removeEventListener('themechange', onThemeChange)
     zr.off('mousewheel')
@@ -579,6 +610,16 @@ watch(
   () => props.windowEnd,
   (v) => {
     if (typeof v === 'number') applyZoom(zoomStart.value, v)
+  },
+)
+
+watch(
+  () => props.height,
+  () => {
+    // Wait for DOM update
+    setTimeout(() => {
+      chart?.resize()
+    }, 50)
   },
 )
 

@@ -1,5 +1,6 @@
 services:
   postgres:
+    image: postgres:16-alpine
     container_name: stock-platform-postgres-test
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
