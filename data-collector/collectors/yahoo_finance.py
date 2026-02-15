@@ -19,6 +19,11 @@ def _sleep_with_jitter(base_seconds: float) -> None:
 
 
 def warmup_yahoo_session(session: requests.Session, *, timeout: float, user_agent: str) -> None:
+    """
+    Initializes the Yahoo Finance session by obtaining necessary cookies and a "crumb".
+    Yahoo's API requires a valid cookie (consent) and a crumb token to prevent scraping.
+    This function visits the main page to populate these.
+    """
     global _WARMED_UP
     if _WARMED_UP:
         return
@@ -52,6 +57,10 @@ def warmup_yahoo_session(session: requests.Session, *, timeout: float, user_agen
 
 
 def _refresh_crumb(session: requests.Session, *, timeout: float, user_agent: str) -> None:
+    """
+    Fetches a new 'crumb' from Yahoo's API. 
+    The crumb is a CSRF-like token required for most JSON API calls.
+    """
     global _CRUMB, _CRUMB_AT
     headers = {
         "User-Agent": user_agent,

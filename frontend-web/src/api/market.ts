@@ -1,5 +1,20 @@
+/**
+ * Market Data API Client
+ * 
+ * Provides methods to interact with the backend market data endpoints.
+ * Includes types for DTOs used in requests and responses.
+ * 
+ * Key Domains:
+ * - Stocks: Details, Bars (OHLC), Indicators.
+ * - Indices: Constituents, Breadth.
+ * - Analysis: Streaks, Relative Strength, Factor Ranks.
+ * - Trading: Plans, Alerts.
+ */
 import { http } from './client'
 
+/**
+ * Standard OHLCV Bar
+ */
 export type BarDto = {
   date: string
   open: number | null
@@ -272,11 +287,18 @@ export type EvaluateAlertsResponseDto = {
   latestEvents: AlertEventDto[]
 }
 
+/**
+ * Fetch list of all available indices.
+ */
 export async function listIndices() {
   const res = await http.get<IndexListItemDto[]>('/api/indices')
   return res.data
 }
 
+/**
+ * Get market breadth snapshot for a specific index.
+ * Returns statistics like up/down count, members above MA20/50/200, etc.
+ */
 export async function getBreadth(index: string) {
   const res = await http.get<BreadthSnapshotDto>('/api/market/breadth', { params: { index } })
   return res.data
@@ -439,6 +461,14 @@ export async function getSp500Bars(params?: { start?: string; end?: string; inte
   return getIndexBars('^SPX', params?.interval || '1d', params?.start, params?.end)
 }
 
+/**
+ * List stocks with pagination, sorting, and filtering.
+ * 
+ * @param params.index - Filter by index symbol (e.g. ^SPX)
+ * @param params.query - Search query for symbol or name
+ * @param params.page - Page number (0-based)
+ * @param params.size - Page size
+ */
 export async function listStocks(params: {
   index?: string
   query?: string
@@ -469,6 +499,11 @@ export async function getStockIndicators(
   return res.data
 }
 
+// --- Sync Operations ---
+
+/**
+ * Trigger wiki data sync for an index.
+ */
 export async function syncWiki(index: string = '^SPX') {
   if (import.meta.env.DEV) console.info('[api] POST /api/sync/wiki', { index })
   const res = await http.post<SyncJobDto>('/api/sync/wiki', null, { params: { index } })
@@ -476,6 +511,9 @@ export async function syncWiki(index: string = '^SPX') {
   return res.data
 }
 
+/**
+ * Trigger fundamentals data sync for an index.
+ */
 export async function syncFundamentals(index: string = '^SPX') {
   if (import.meta.env.DEV) console.info('[api] POST /api/sync/fundamentals', { index })
   const res = await http.post<SyncJobDto>('/api/sync/fundamentals', null, { params: { index } })

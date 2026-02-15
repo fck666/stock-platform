@@ -28,11 +28,17 @@ def _parse_csv_list(value: str | None) -> list[str] | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Builds the command-line argument parser for the data collector.
+    Supports various subcommands for different sync operations.
+    """
     p = argparse.ArgumentParser(prog="data-collector", add_help=True)
     p.add_argument("--log-level", default="INFO")
 
     sub = p.add_subparsers(dest="command", required=True)
 
+    # Command: Full Sync
+    # Fetches data and exports to Excel/CSV. Standalone mode.
     full = sub.add_parser("full-sync")
     full.add_argument("--start", dest="start_date", default=None, help="YYYY-MM-DD")
     full.add_argument("--end", dest="end_date", default=None, help="YYYY-MM-DD")
@@ -45,18 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--stock-prices-max-rows", type=int, default=200_000)
     full.add_argument("--no-export-prices-csv", action="store_true", default=False)
 
+    # Command: DB Sync Wiki
+    # Updates stock metadata (description, GICS sector) from Wikipedia.
     wiki = sub.add_parser("db-sync-wiki")
     wiki.add_argument("--db-dsn", default=None)
     wiki.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     wiki.add_argument("--limit", type=int, default=None)
     wiki.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
 
+    # Command: DB Sync Fundamentals
+    # Updates fundamental data (market cap, shares outstanding) from Yahoo Finance.
     fund = sub.add_parser("db-sync-fundamentals")
     fund.add_argument("--db-dsn", default=None)
     fund.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
     fund.add_argument("--limit", type=int, default=None)
     fund.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
 
+    # Command: DB Full Prices
+    # Full historical price sync (backfill).
     prices = sub.add_parser("db-full-prices")
     prices.add_argument("--db-dsn", default=None)
     prices.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")
@@ -67,6 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     prices.add_argument("--symbols", default=None, help="Comma-separated, e.g. AAPL,MSFT")
     prices.add_argument("--no-indices", action="store_true", default=False)
 
+    # Command: DB Daily Sync
+    # Incremental sync for daily updates (runs faster).
     daily = sub.add_parser("db-daily-sync")
     daily.add_argument("--db-dsn", default=None)
     daily.add_argument("--index", default="^SPX", help="Index symbol, e.g. ^SPX, ^HSI, ^HSTECH")

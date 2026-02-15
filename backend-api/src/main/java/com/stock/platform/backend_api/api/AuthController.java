@@ -13,6 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/auth")
+/**
+ * REST Controller for User Authentication.
+ * Handles login (password-based), token refresh, and logout.
+ */
 public class AuthController {
     private final IamAuthService auth;
 
@@ -20,18 +24,35 @@ public class AuthController {
         this.auth = auth;
     }
 
+    /**
+     * Authenticate user with username and password.
+     *
+     * @param req Login credentials
+     * @return Access and Refresh tokens
+     */
     @PostMapping("/login")
     public TokenResponseDto login(@Valid @RequestBody LoginRequestDto req) {
         var tokens = auth.loginWithPassword(req.username().trim(), req.password());
         return new TokenResponseDto(tokens.accessToken(), tokens.refreshToken());
     }
 
+    /**
+     * Refresh an expired access token using a valid refresh token.
+     *
+     * @param req Request containing refresh token
+     * @return New Access and Refresh tokens
+     */
     @PostMapping("/refresh")
     public TokenResponseDto refresh(@Valid @RequestBody RefreshTokenRequestDto req) {
         var tokens = auth.refresh(req.refreshToken().trim());
         return new TokenResponseDto(tokens.accessToken(), tokens.refreshToken());
     }
 
+    /**
+     * Revoke a refresh token (Logout).
+     *
+     * @param req Request containing refresh token to revoke
+     */
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/logout")
     public void logout(@Valid @RequestBody RefreshTokenRequestDto req) {

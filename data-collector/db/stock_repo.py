@@ -9,10 +9,17 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 class StockRepository:
+    """
+    Data Access Layer for Stock Data.
+    
+    Encapsulates raw SQL queries to PostgreSQL using psycopg2.
+    Handles upserts (INSERT ... ON CONFLICT DO UPDATE) for idempotent data ingestion.
+    """
     def __init__(self, conn: psycopg2.extensions.connection) -> None:
         self._conn = conn
 
     def ensure_search_path(self) -> None:
+        """Sets the PostgreSQL search_path to 'market, public'."""
         with self._conn.cursor() as cur:
             cur.execute("SET search_path TO market, public;")
         self._conn.commit()
@@ -26,6 +33,10 @@ class StockRepository:
         exchange: str | None = None,
         currency: str | None = None,
     ) -> int:
+        """
+        Create or update a security (Stock, Index, ETF).
+        Returns the security_id.
+        """
         sql = """
         INSERT INTO security (security_type, canonical_symbol, name, exchange, currency)
         VALUES (%s, %s, %s, %s, %s)
@@ -511,6 +522,10 @@ class StockRepository:
             return s or None
 
     def upsert_price_bars(self, rows: Iterable["StockRepository.PriceBarRow"]) -> int:
+        """
+        Batch insert/update price bars using psycopg2 `execute_values` for performance.
+        Handles conflicts on (security_id, interval, bar_date).
+        """
         rows_list = list(rows)
         if not rows_list:
             return 0

@@ -8,23 +8,28 @@ import { createStock, listIndices, listStocks, syncStocks, type IndexListItemDto
 
 const router = useRouter()
 
+// --- State ---
 const loading = ref(false)
 const syncing = ref(false)
 const query = ref('')
 
+// Pagination & Sorting
 const page = ref(1)
 const size = ref(50)
 const total = ref(0)
 const sortBy = ref<'symbol' | 'name'>('symbol')
 const sortDir = ref<'asc' | 'desc'>('asc')
 
+// Table Data
 const rows = ref<StockListItemDto[]>([])
 const selected = ref<StockListItemDto[]>([])
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 
+// --- Computed ---
 const selectedSymbols = computed(() => selected.value.map((r) => r.symbol))
 const allSelectedOnPage = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
 
+// --- Index Filter State ---
 const indices = ref<IndexListItemDto[]>([])
 const activeIndex = ref<string>('^SPX')
 const activeIndexName = computed(() => {
@@ -34,6 +39,7 @@ const activeIndexName = computed(() => {
 })
 const syncIndex = ref<string>('^SPX')
 
+// --- Create Dialog State ---
 const showCreate = ref(false)
 const createSymbol = ref('')
 const createName = ref('')
@@ -43,13 +49,16 @@ const createIndexSymbols = ref<string[]>([])
 const selectableIndices = computed(() => indices.value.map(i => i.symbol))
 const hasIndicesLoaded = computed(() => indices.value.length > 0)
 
+/**
+ * Load stocks list from API based on current filters and pagination.
+ */
 async function load() {
   loading.value = true
   try {
     const res = await listStocks({
       index: activeIndex.value,
       query: query.value.trim() || undefined,
-      page: page.value - 1,
+      page: page.value - 1, // API is 0-based
       size: size.value,
       sortBy: sortBy.value,
       sortDir: sortDir.value,
@@ -81,6 +90,9 @@ function onSelectionChange(val: StockListItemDto[]) {
   selected.value = val
 }
 
+/**
+ * Trigger sync for selected stocks.
+ */
 async function syncSelected() {
   if (selectedSymbols.value.length === 0) {
     ElMessage.warning('请先选择要同步的股票')
@@ -112,6 +124,9 @@ function onSortChange(e: any) {
   load()
 }
 
+/**
+ * Switch the active index filter and reload data.
+ */
 function changeIndex(sym: string) {
   if (activeIndex.value === sym) return
   activeIndex.value = sym

@@ -21,6 +21,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/stocks")
+/**
+ * REST Controller for Stock Data.
+ * Provides endpoints for listing stocks, getting details, historical bars, and technical indicators.
+ */
 public class StockController {
     private final MarketRepository marketRepository;
     private final IndicatorsService indicatorsService;
@@ -30,6 +34,17 @@ public class StockController {
         this.indicatorsService = indicatorsService;
     }
 
+    /**
+     * List stocks with pagination and filtering.
+     *
+     * @param index Filter by index symbol (default: ^SPX)
+     * @param query Search query for symbol or name
+     * @param page Page number (0-based)
+     * @param size Page size (default: 50, max: 200)
+     * @param sortBy Field to sort by
+     * @param sortDir Sort direction (asc/desc)
+     * @return Paged response of stock items
+     */
     @GetMapping
     public PagedResponse<StockListItemDto> listStocks(
             @RequestParam(defaultValue = "^SPX") String index,
@@ -46,6 +61,12 @@ public class StockController {
         return marketRepository.listIndexStocks(idx, query, safePage, safeSize, sortBy, sortDir, lang);
     }
 
+    /**
+     * Get detailed information for a specific stock.
+     *
+     * @param symbol Stock symbol
+     * @return Stock detail DTO
+     */
     @GetMapping("/{symbol}")
     public StockDetailDto getStockDetail(
             @PathVariable String symbol,
@@ -54,6 +75,19 @@ public class StockController {
         return marketRepository.getStockDetail(symbol.toUpperCase(), lang);
     }
 
+    /**
+     * Get historical price bars (OHLCV) for a stock.
+     * 
+     * Default Behavior:
+     * - Returns last 2 years of daily data if no dates specified.
+     * - Ends at yesterday if no end date specified.
+     *
+     * @param symbol Stock symbol (case insensitive)
+     * @param interval Time interval (1d, 1w, 1m, etc.)
+     * @param start Start date (YYYY-MM-DD)
+     * @param end End date (YYYY-MM-DD)
+     * @return List of bars sorted by date
+     */
     @GetMapping("/{symbol}/bars")
     public List<BarDto> getStockBars(
             @PathVariable String symbol,
@@ -69,6 +103,19 @@ public class StockController {
         return marketRepository.getBarsBySymbol(symbol.toUpperCase(), interval, effectiveStart, effectiveEnd);
     }
 
+    /**
+     * Get calculated indicators (MA, MACD, KDJ) for a stock.
+     * 
+     * Parameters:
+     * - `ma`: Comma-separated integers for Moving Average periods (e.g., "20,50,200").
+     * - `include`: Comma-separated strings for other indicators (supported: "macd", "kdj").
+     *
+     * @param symbol Stock symbol
+     * @param interval Time interval
+     * @param ma Comma-separated list of MA periods
+     * @param include Comma-separated list of other indicators
+     * @return Indicator response containing time-series data points
+     */
     @GetMapping("/{symbol}/indicators")
     public IndicatorsResponseDto getIndicators(
             @PathVariable String symbol,

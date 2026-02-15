@@ -12,6 +12,10 @@ import java.time.temporal.WeekFields;
 import java.util.*;
 
 @Service
+/**
+ * Service for calculating technical indicators.
+ * Computes MA, MACD, KDJ, and handles time-frame aggregation (weekly, monthly, etc.).
+ */
 public class IndicatorsService {
     private final MarketRepository marketRepository;
 
@@ -19,6 +23,19 @@ public class IndicatorsService {
         this.marketRepository = marketRepository;
     }
 
+    /**
+     * Compute indicators for a given symbol and interval.
+     * Fetches raw daily bars from DB, aggregates them if needed, and then computes requested indicators.
+     *
+     * @param canonicalSymbol Stock symbol
+     * @param interval Interval string (1d, 1w, 1m, 1q, 1y)
+     * @param start Start date
+     * @param end End date
+     * @param maPeriods List of periods for Simple Moving Average (e.g. [20, 50, 200])
+     * @param includeMacd Whether to compute MACD (12, 26, 9)
+     * @param includeKdj Whether to compute KDJ (9, 3, 3)
+     * @return DTO containing all computed points
+     */
     public IndicatorsResponseDto getIndicators(
             String canonicalSymbol,
             String interval,
@@ -34,13 +51,17 @@ public class IndicatorsService {
             throw new IllegalArgumentException("start must be <= end");
         }
 
+        // 1. Determine fetch range. We need extra history for indicators to stabilize (warm-up period).
+        // e.g. for MA200, we need at least 200 days prior to start date.
         int maxMa = maPeriods.stream().max(Integer::compareTo).orElse(0);
         int lookbackDays = Math.max(1200, maxMa * 3);
         LocalDate fetchStart = effectiveStart.minusDays(lookbackDays);
 
+        // 2. Fetch daily bars and aggregate if interval > 1d
         List<BarDto> dailyBars = marketRepository.getBarsBySymbol(canonicalSymbol, "1d", fetchStart, effectiveEnd);
         List<BarDto> bars = aggregateIfNeeded(dailyBars, interval);
 
+        // 3. Prepare arrays for calculation
         List<LocalDate> dates = new ArrayList<>(bars.size());
         double[] close = new double[bars.size()];
         double[] high = new double[bars.size()];
@@ -54,6 +75,7 @@ public class IndicatorsService {
             low[i] = toDouble(b.low());
         }
 
+        // 4. Calculate SMAs
         Map<Integer, double[]> maMap = new HashMap<>();
         for (Integer p : maPeriods) {
             if (p != null && p > 0) {
@@ -61,6 +83,7 @@ public class IndicatorsService {
             }
         }
 
+        // 5. Calculate MACD (standard settings: 12, 26, 9)
         double[] dif = null;
         double[] dea = null;
         double[] hist = null;
@@ -78,6 +101,7 @@ public class IndicatorsService {
             }
         }
 
+        // 6. Calculate KDJ (standard settings: 9, 3, 3)
         double[] k = null;
         double[] d = null;
         double[] j = null;

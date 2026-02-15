@@ -11,6 +11,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+/**
+ * Service for executing pluggable analysis strategies.
+ * Strategies are discovered automatically from the Spring context.
+ */
 public class AnalysisService {
     private final Map<String, AnalysisStrategy> strategies = new ConcurrentHashMap<>();
 
@@ -20,6 +24,12 @@ public class AnalysisService {
         }
     }
 
+    /**
+     * Execute an analysis request using the appropriate strategy.
+     *
+     * @param request The analysis request containing the strategy type (e.g., "trend", "volatility")
+     * @return The analysis results
+     */
     public AnalysisResponseDto analyze(AnalysisRequestDto request) {
         AnalysisStrategy strategy = strategies.get(request.type());
         if (strategy == null) {

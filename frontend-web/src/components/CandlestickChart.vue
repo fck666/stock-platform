@@ -1,4 +1,18 @@
 <script setup lang="ts">
+/**
+ * CandlestickChart
+ * 
+ * A comprehensive ECharts wrapper for financial data visualization.
+ * 
+ * Features:
+ * - Candlestick (K-Line) series for OHLC data.
+ * - Volume bar chart (color-coded by Up/Down).
+ * - Moving Average (MA) lines overlay.
+ * - Technical Indicators (MACD, KDJ) in separate grid panes.
+ * - Corporate Actions (Dividends, Splits) markers on the chart.
+ * - Custom Zoom & Pan interactions (Mouse wheel, Drag).
+ * - Responsive resizing.
+ */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import type { BarDto } from '../api/market'
@@ -68,6 +82,13 @@ function resetZoom() {
 
 defineExpose({ panLeft, panRight, resetZoom })
 
+/**
+ * Custom Wheel Event Handler
+ * 
+ * Implements Google Finance / TradingView style zooming:
+ * - Ctrl + Wheel (or Pinch on trackpad): Zoom in/out at cursor position.
+ * - Wheel (without modifier): Pan left/right.
+ */
 function onWheel(e: WheelEvent) {
   if (!chart || !elRef.value) return
 
@@ -139,6 +160,21 @@ function onPointerUp(e: PointerEvent) {
   } catch {}
 }
 
+/**
+ * Constructs the ECharts option object.
+ * 
+ * Layout Logic:
+ * - Calculates heights for Main Chart, Volume Chart, and Sub-Indicator Panes (MACD, KDJ).
+ * - Dynamically stacks grids vertically.
+ * - Links X-Axes for synchronized zooming/panning.
+ * 
+ * Series Logic:
+ * - Candlestick series (Open, Close, Low, High).
+ * - Volume series (Bar).
+ * - MA lines (Line).
+ * - Indicator series (Lines/Bars for MACD/KDJ).
+ * - Event Markers (Scatter points for Dividends/Splits).
+ */
 function buildOption(bars: BarDto[], title?: string): echarts.EChartsOption {
   const bg = cssVar('--el-bg-color', '#ffffff')
   const muted = cssVar('--app-muted', '#667085')

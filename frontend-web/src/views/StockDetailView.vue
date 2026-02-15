@@ -1,4 +1,16 @@
 <script setup lang="ts">
+/**
+ * StockDetailView
+ * 
+ * The main view for a single stock's detailed analysis.
+ * Features:
+ * - Interactive Candlestick Chart (Day/Week/Month/Year intervals)
+ * - Technical Indicators (MA, MACD, KDJ) configurable via checkboxes
+ * - Relative Strength (RS) analysis against a benchmark index
+ * - Longest Streak analysis (Consecutive Up/Down days)
+ * - Corporate Actions (Dividends, Splits) visualization
+ * - Fundamental Data (Market Cap, Sector, Description)
+ */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -22,6 +34,7 @@ import {
 
 const route = useRoute()
 
+// --- Route & State ---
 const symbol = computed(() => String(route.params.symbol || '').toUpperCase())
 
 const loading = ref(false)
@@ -30,15 +43,19 @@ const detail = ref<StockDetailDto | null>(null)
 const bars = ref<BarDto[]>([])
 const indicators = ref<IndicatorsResponseDto | null>(null)
 const indicatorLoading = ref(false)
+
+// --- Relative Strength State ---
 const rsLoading = ref(false)
 const rsSeries = ref<RsSeriesDto | null>(null)
-const rsIndex = ref('^SPX')
+const rsIndex = ref('^SPX') // Default benchmark
 const indices = ref<IndexListItemDto[]>([])
 
+// --- Streak State ---
 const streakLoading = ref(false)
 const streakUp = ref<StreakRankItemDto | null>(null)
 const streakDown = ref<StreakRankItemDto | null>(null)
 
+// --- Chart Configuration ---
 const intervalLabel = computed(() => {
   if (interval.value === '1w') return '周K'
   if (interval.value === '1m') return '月K'
@@ -66,6 +83,9 @@ function ymd(d: Date) {
   return `${yyyy}-${mm}-${dd}`
 }
 
+/**
+ * Sets default date range (past 2 years).
+ */
 function setDefaultRange() {
   const e = new Date()
   e.setDate(e.getDate() - 1)
@@ -93,6 +113,10 @@ function setAll() {
   loadAll()
 }
 
+/**
+ * Adjusts chart height dynamically based on window size and selected indicators.
+ * Each sub-indicator (MACD, KDJ) adds extra height.
+ */
 function updateChartHeight() {
   const base = clamp(Math.floor(window.innerHeight - 420), 520, 900)
   const extra = selectedSubIndicators.value.length * 180
@@ -109,6 +133,7 @@ const isSp500 = computed(() => {
   return detail.value?.identifiers?.some(i => i.provider === 'stooq' && !i.identifier.endsWith('.HK'))
 })
 
+// --- Corporate Actions Visibility ---
 const showAllCorporateActions = ref(false)
 const corporateActionsVisible = computed(() => {
   const list = detail.value?.corporateActions || []
@@ -119,6 +144,10 @@ const hasMoreCorporateActions = computed(() => {
   return n > 10
 })
 
+/**
+ * Master load function.
+ * Fetches basic details, price bars, indicators, RS, and streaks in parallel where possible.
+ */
 async function loadAll() {
   if (!symbol.value) return
   document.title = `${symbol.value} - Stock Platform`
@@ -126,6 +155,7 @@ async function loadAll() {
   try {
     detail.value = await getStockDetail(symbol.value)
     showAllCorporateActions.value = false
+    // Fetch bars first as indicators depend on range, though here we use same range params
     bars.value = await getStockBars(symbol.value, {
       interval: interval.value,
       start: start.value || undefined,

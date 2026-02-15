@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * LoginView
+ * 
+ * Simple login form using username/password.
+ * Interacts with the `auth` module to obtain and store JWT tokens.
+ * Redirects to the previous page (query.next) or home upon success.
+ */
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -12,6 +19,11 @@ const username = ref('')
 const password = ref('')
 const loading = ref(false)
 
+/**
+ * Submits credentials to the backend.
+ * On success: shows message, redirects to `next` or home.
+ * On failure: displays error toast.
+ */
 async function handleLogin() {
   loading.value = true
   try {

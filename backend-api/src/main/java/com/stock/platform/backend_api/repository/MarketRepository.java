@@ -21,6 +21,13 @@ import java.util.Map;
 import java.util.Optional;
 
 @Repository
+/**
+ * Core Data Access Object for Market Data.
+ * 
+ * This repository handles all database interactions related to stocks, indices, prices, and technical analysis.
+ * It heavily relies on PostgreSQL window functions to perform complex calculations (Moving Averages, RSI, Drawdowns)
+ * directly in the database for performance.
+ */
 public class MarketRepository {
     private final NamedParameterJdbcTemplate jdbc;
 
@@ -28,6 +35,9 @@ public class MarketRepository {
         this.jdbc = jdbc;
     }
 
+    /**
+     * Get the latest date for which we have index membership data.
+     */
     public Optional<LocalDate> getLatestIndexAsOfDate(String indexSymbol) {
         MapSqlParameterSource params = new MapSqlParameterSource().addValue("symbol", indexSymbol);
         LocalDate asOf = jdbc.query(
@@ -1064,6 +1074,16 @@ public class MarketRepository {
         }
     }
 
+    /**
+     * Calculate a snapshot of market breadth for a given index.
+     * Computes statistics like:
+     * - Number of advancing/declining stocks
+     * - Stocks above their 20/50/200-day Moving Averages
+     * - Stocks making new 52-week highs/lows
+     * - Stocks with volume surges
+     * 
+     * Uses a complex SQL query with window functions to compute these metrics for all constituents in one go.
+     */
     public BreadthSnapshotDto getBreadthSnapshot(String indexSymbol, double volumeSurgeMultiple) {
         requireIndexId(indexSymbol);
         LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);
@@ -1410,6 +1430,19 @@ public class MarketRepository {
         );
     }
 
+    /**
+     * Rank stocks by their longest winning or losing streak.
+     * Uses the "Gaps and Islands" pattern with SQL window functions to identify consecutive days of movement.
+     *
+     * @param indexSymbol Index to filter by
+     * @param interval Bar interval
+     * @param directionSign Positive for winning streak, negative for losing streak
+     * @param start Start date
+     * @param end End date
+     * @param limit Max results
+     * @param volumeMultiple Volume filter (must be > N * AvgVolume)
+     * @param flatThresholdPct Threshold to consider a day "flat" (unchanged)
+     */
     public List<StreakRankItemDto> rankLongestStreaks(
             String indexSymbol,
             String interval,
@@ -1800,6 +1833,10 @@ public class MarketRepository {
         return new StreakRankItemDto(stockSymbol, name, itv, dirLabel, r.streak(), r.startDate(), r.endDate());
     }
 
+    /**
+     * Rank stocks by Maximum Drawdown (MDD) over a period.
+     * MDD is calculated as the maximum percentage drop from a running maximum.
+     */
     public List<FactorRankItemDto> rankMaxDrawdown(
             String indexSymbol,
             String interval,
@@ -2319,6 +2356,11 @@ public class MarketRepository {
         return new RsSeriesDto(stockSymbol, indexSymbol, start.toString(), end.toString(), stockReturn, indexReturn, rsReturn, points);
     }
 
+    /**
+     * Rank stocks by Relative Strength (RS) compared to an index (e.g. SPX).
+     * RS is calculated as StockPrice / IndexPrice.
+     * Returns stocks with the highest RS performance over the lookback period.
+     */
     public List<RsRankItemDto> rankRelativeStrength(String indexSymbol, int lookbackDays, int limit, boolean requireAboveMa50) {
         long indexId = requireIndexId(indexSymbol);
         LocalDate asOf = getLatestIndexAsOfDate(indexSymbol).orElse(null);

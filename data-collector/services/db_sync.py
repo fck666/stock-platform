@@ -601,8 +601,13 @@ def _sync_single_security_prices(
     user_agent: str,
 ) -> int:
     """
-    Syncs prices for a single security. Detects adjustments (splits/dividends)
-    and re-syncs full history if necessary.
+    Syncs prices for a single security. 
+    
+    Features:
+    - Incremental sync: Checks the last available date in DB.
+    - Split/Dividend detection: Compares overlapping data points. If mismatch > 0.5%, 
+      it assumes a corporate action occurred and triggers a full history re-sync.
+    - Chunking: Fetches data in chunks to avoid timeouts.
     """
     max_date = repo.get_max_bar_date(security_id=security_id, interval=interval)
     effective_start = start

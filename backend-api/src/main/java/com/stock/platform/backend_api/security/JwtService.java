@@ -15,6 +15,10 @@ import java.util.Date;
 import java.util.Optional;
 
 @Component
+/**
+ * Service for handling JSON Web Tokens (JWT).
+ * Responsible for creating, signing, and parsing access tokens.
+ */
 public class JwtService {
     private final SecretKey key;
     private final long accessTokenTtlSeconds;
@@ -25,6 +29,12 @@ public class JwtService {
         this.key = buildKey(jwt.secret());
     }
 
+    /**
+     * Creates a signed JWT access token for the given user.
+     *
+     * @param user The authenticated user
+     * @return Signed JWT string
+     */
     public String createAccessToken(AuthUser user) {
         Instant now = Instant.now();
         Instant exp = now.plusSeconds(accessTokenTtlSeconds);
@@ -37,6 +47,12 @@ public class JwtService {
                 .compact();
     }
 
+    /**
+     * Parses and verifies a JWT token.
+     *
+     * @param token The JWT string
+     * @return Optional containing the subject (user ID) if valid, empty otherwise
+     */
     public Optional<JwtSubject> parseAccessToken(String token) {
         try {
             Jws<Claims> jws = Jwts.parser().verifyWith(key).build().parseSignedClaims(token);
@@ -50,6 +66,9 @@ public class JwtService {
         }
     }
 
+    /**
+     * Builds the HMAC-SHA key from configuration or generates a random one if missing.
+     */
     private static SecretKey buildKey(String configured) {
         if (configured != null && !configured.isBlank()) {
             byte[] raw = configured.getBytes(StandardCharsets.UTF_8);
