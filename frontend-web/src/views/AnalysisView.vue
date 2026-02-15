@@ -28,7 +28,7 @@ const form = reactive({
   ] as [string, string],
   limit: 20,
   trendType: 'strong',
-  threshold: 0.9,
+  threshold: 0.6,
   alphaBetaType: 'alpha'
 })
 
