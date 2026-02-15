@@ -78,6 +78,11 @@ body {
   background: var(--app-bg);
 }
 
+.app-main--bare {
+  padding: 0;
+  background: transparent;
+}
+
 .el-card {
   border-radius: var(--app-radius) !important;
   border-color: var(--app-border) !important;

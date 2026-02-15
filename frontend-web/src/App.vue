@@ -7,6 +7,7 @@ import { auth } from './auth/auth'
 
 const route = useRoute()
 const router = useRouter()
+const isLoginRoute = computed(() => route.path === '/login')
 
 const theme = ref<ThemeMode>(getInitialTheme())
 
@@ -40,16 +41,16 @@ async function handleLogout() {
 
 <template>
   <el-container style="min-height: 100vh">
-    <el-header class="app-header">
+    <el-header v-if="!isLoginRoute" class="app-header">
       <div class="app-brand">Stock Platform</div>
       <el-menu mode="horizontal" :default-active="active" @select="handleSelect" class="app-menu" ellipsis>
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/market">市场</el-menu-item>
         <el-menu-item index="/stocks">股票列表</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('admin.index.write')" index="/indices">指数管理</el-menu-item>
-        <el-menu-item index="/plans">交易计划</el-menu-item>
+        <el-menu-item v-if="auth.isLoggedIn.value" index="/plans">交易计划</el-menu-item>
           <el-menu-item index="/alerts">告警</el-menu-item>
-          <el-menu-item index="/analysis">股票分析</el-menu-item>
+          <el-menu-item v-if="auth.isLoggedIn.value" index="/analysis">股票分析</el-menu-item>
           <el-menu-item v-if="auth.hasPermission('data.sync.execute')" index="/sync">数据同步</el-menu-item>
           <el-menu-item v-if="auth.hasPermission('iam.manage')" index="/admin/users">用户管理</el-menu-item>
         </el-menu>
@@ -75,7 +76,7 @@ async function handleLogout() {
         </el-button>
       </div>
     </el-header>
-    <el-main class="app-main">
+    <el-main :class="['app-main', isLoginRoute ? 'app-main--bare' : '']">
       <router-view />
     </el-main>
   </el-container>

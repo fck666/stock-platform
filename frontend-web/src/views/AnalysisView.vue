@@ -131,8 +131,8 @@ onMounted(() => {
           <template v-if="form.type === 'TREND'">
             <el-form-item label="趋势目标">
               <el-radio-group v-model="form.trendType" size="small">
-                <el-radio-button label="strong">走势强</el-radio-button>
-                <el-radio-button label="weak">走势弱</el-radio-button>
+                <el-radio-button value="strong">走势强</el-radio-button>
+                <el-radio-button value="weak">走势弱</el-radio-button>
               </el-radio-group>
             </el-form-item>
           </template>
@@ -144,8 +144,8 @@ onMounted(() => {
           <template v-if="form.type === 'ALPHA_BETA'">
             <el-form-item label="排序指标">
               <el-radio-group v-model="form.alphaBetaType" size="small">
-                <el-radio-button label="alpha">Alpha (超额收益)</el-radio-button>
-                <el-radio-button label="beta">Beta (波动相关)</el-radio-button>
+                <el-radio-button value="alpha">Alpha (超额收益)</el-radio-button>
+                <el-radio-button value="beta">Beta (波动相关)</el-radio-button>
               </el-radio-group>
             </el-form-item>
           </template>

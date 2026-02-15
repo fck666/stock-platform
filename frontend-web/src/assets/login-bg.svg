@@ -1,0 +1,48 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <radialGradient id="g2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1180 220) rotate(140) scale(740 540)">
+      <stop stop-color="#5B8FF9" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#5B8FF9" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g3" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(420 720) rotate(-35) scale(820 620)">
+      <stop stop-color="#26A69A" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#26A69A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+      <stop stop-color="#5B8FF9"/>
+      <stop offset="0.55" stop-color="#26A69A"/>
+      <stop offset="1" stop-color="#FB7185"/>
+    </linearGradient>
+    <filter id="blur" x="-80" y="-80" width="1760" height="1060" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#g1)"/>
+  <rect width="1600" height="900" fill="url(#grid)" opacity="0.9"/>
+  <rect width="1600" height="900" fill="url(#g2)"/>
+  <rect width="1600" height="900" fill="url(#g3)"/>
+
+  <g opacity="0.55" filter="url(#blur)">
+    <path d="M-40 640C140 590 240 520 330 470C420 420 520 410 640 450C760 490 820 560 910 575C1000 590 1100 540 1180 470C1260 400 1360 330 1640 290" stroke="url(#line)" stroke-width="10" stroke-linecap="round"/>
+    <path d="M-60 690C120 650 250 590 360 540C470 490 560 490 650 520C740 550 830 640 930 660C1030 680 1140 630 1220 560C1300 490 1380 420 1660 360" stroke="rgba(255,255,255,0.10)" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <g opacity="0.22">
+    <path d="M120 160V820" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+    <path d="M320 120V840" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M520 140V820" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M720 120V840" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M920 140V820" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M1120 120V840" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M1320 140V820" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+    <path d="M1520 120V840" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+  </g>
+</svg>

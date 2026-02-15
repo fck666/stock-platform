@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
+import { auth } from '../auth/auth'
 import {
   getBreadth,
   getBreadthDetail,
@@ -20,6 +21,7 @@ import {
 } from '../api/market'
 
 const router = useRouter()
+const route = useRoute()
 const loadingIndices = ref(false)
 const indices = ref<IndexListItemDto[]>([])
 const activeIndex = ref('^SPX')
@@ -85,6 +87,13 @@ const factorInterval = ref<'1d' | '1w' | '1m'>('1d')
 const factorDateRange = ref<[Date, Date] | null>(null)
 const factorLookback = ref<number>(252)
 
+function requireLogin() {
+  if (auth.ready.value && auth.isLoggedIn.value) return true
+  ElMessage.warning('请先登录')
+  router.push({ path: '/login', query: { next: route.fullPath } })
+  return false
+}
+
 async function loadIndices() {
   loadingIndices.value = true
   try {
@@ -101,6 +110,7 @@ async function loadIndices() {
 }
 
 async function refreshScreener() {
+  if (!requireLogin()) return
   screenerLoading.value = true
   try {
     if (preset.value === 'trend' || preset.value === 'breakout') {
@@ -206,6 +216,7 @@ async function refreshBreadth() {
 
 async function refreshAll() {
   if (activeTab.value === 'screener') {
+    if (!(auth.ready.value && auth.isLoggedIn.value)) return
     await refreshScreener()
   } else {
     await refreshBreadth()
@@ -214,14 +225,18 @@ async function refreshAll() {
 
 onMounted(async () => {
   await loadIndices()
-  await refreshScreener()
+  if (auth.ready.value && auth.isLoggedIn.value) {
+    await refreshScreener()
+  }
 })
 
 function handleRowClick(row: any) {
+  if (!requireLogin()) return
   router.push(`/stocks/${row.symbol}`)
 }
 
 async function showBreadthDetail(metric: string, title: string) {
+  if (!requireLogin()) return
   breadthDetailTitle.value = title
   breadthDetailVisible.value = true
   breadthDetailLoading.value = true
