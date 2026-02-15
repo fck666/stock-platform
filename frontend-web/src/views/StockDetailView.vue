@@ -31,6 +31,7 @@ import {
   type RsSeriesDto,
   type StreakRankItemDto,
 } from '../api/market'
+import { auth } from '../auth/auth'
 
 const route = useRoute()
 
@@ -39,6 +40,7 @@ const symbol = computed(() => String(route.params.symbol || '').toUpperCase())
 
 const loading = ref(false)
 const syncing = ref(false)
+const canSync = computed(() => auth.hasPermission('data.sync.execute'))
 const detail = ref<StockDetailDto | null>(null)
 const bars = ref<BarDto[]>([])
 const indicators = ref<IndicatorsResponseDto | null>(null)
@@ -431,7 +433,7 @@ watch(rsIndex, () => loadRelativeStrength())
             <el-button @click="setAll">ALL</el-button>
           </div>
         </div>
-        <el-space>
+        <el-space v-if="canSync">
           <el-button type="primary" :loading="syncing" @click="triggerSync">同步数据</el-button>
         </el-space>
       </div>

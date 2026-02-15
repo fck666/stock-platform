@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CandlestickChart from '../components/CandlestickChart.vue'
 import { type BarDto, getIndexBars, getIndexIndicators, getLongestStreakForSymbol, syncPrices, type IndicatorsResponseDto, type StreakRankItemDto } from '../api/market'
+import { auth } from '../auth/auth'
 
 const loading = ref(false)
 const syncing = ref(false)
@@ -285,7 +286,7 @@ onBeforeUnmount(() => {
               <el-option label="年线" value="1y" />
             </el-select>
             <el-button @click="load" :loading="loading">刷新</el-button>
-            <el-button type="primary" @click="triggerSync" :loading="syncing">同步数据</el-button>
+            <el-button v-if="auth.hasPermission('data.sync.execute')" type="primary" @click="triggerSync" :loading="syncing">同步数据</el-button>
           </el-space>
         </div>
       </template>

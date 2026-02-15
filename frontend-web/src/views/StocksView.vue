@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import type { ElTable } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import { createStock, listIndices, listStocks, syncStocks, type IndexListItemDto, type StockListItemDto } from '../api/market'
+import { auth } from '../auth/auth'
 
 const router = useRouter()
 
@@ -28,6 +29,8 @@ const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 // --- Computed ---
 const selectedSymbols = computed(() => selected.value.map((r) => r.symbol))
 const allSelectedOnPage = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
+const canSync = computed(() => auth.hasPermission('data.sync.execute'))
+const canWriteStock = computed(() => auth.hasPermission('admin.stock.write'))
 
 // --- Index Filter State ---
 const indices = ref<IndexListItemDto[]>([])
@@ -209,7 +212,7 @@ onMounted(() => {
       :title="`股票列表 (${activeIndexName})`"
       subtitle="支持搜索、分页、选择当前页并批量同步日线数据"
     >
-      <el-button :disabled="!hasIndicesLoaded" @click="showCreate = true">增加股票</el-button>
+      <el-button v-if="canWriteStock" :disabled="!hasIndicesLoaded" @click="showCreate = true">增加股票</el-button>
       <el-input
         v-model="query"
         placeholder="搜索：股票代码 / 公司名 / 简称"
@@ -218,16 +221,18 @@ onMounted(() => {
         @keyup.enter="page = 1; load()"
       />
       <el-button :loading="loading" @click="page = 1; load()">搜索</el-button>
-      <el-button :disabled="rows.length === 0" @click="toggleSelectAllCurrentPage">
-        {{ allSelectedOnPage ? '取消全选' : '全选当前页' }}
-      </el-button>
-      <el-select v-model="syncIndex" size="small" style="width: 160px" :disabled="activeIndex !== 'ALL'">
-        <el-option v-for="idx in indices" :key="idx.symbol" :label="`同步：${idx.name || idx.symbol}`" :value="idx.symbol" />
-      </el-select>
-      <el-button type="primary" :loading="syncing" @click="syncSelected">同步数据</el-button>
-      <div v-if="activeIndex === 'ALL'" class="text-muted" style="width: 100%; font-size: 12px">
-        同步时请选择指数范围
-      </div>
+      <template v-if="canSync">
+        <el-button :disabled="rows.length === 0" @click="toggleSelectAllCurrentPage">
+          {{ allSelectedOnPage ? '取消全选' : '全选当前页' }}
+        </el-button>
+        <el-select v-model="syncIndex" size="small" style="width: 160px" :disabled="activeIndex !== 'ALL'">
+          <el-option v-for="idx in indices" :key="idx.symbol" :label="`同步：${idx.name || idx.symbol}`" :value="idx.symbol" />
+        </el-select>
+        <el-button type="primary" :loading="syncing" @click="syncSelected">同步数据</el-button>
+        <div v-if="activeIndex === 'ALL'" class="text-muted" style="width: 100%; font-size: 12px">
+          同步时请选择指数范围
+        </div>
+      </template>
     </PageHeader>
 
     <el-card shadow="never" style="border-radius: 12px">
