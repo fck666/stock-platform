@@ -123,6 +123,11 @@ Authorization: Bearer <accessToken>
 
 前端在本地会自动保存 token，并在请求时自动携带该头。
 
+### 前端路由与权限
+
+- 前端路由支持按权限控制（路由 meta.requiresPermission），当用户缺少权限时会跳转到 403 页面。
+- 管理员“行为看板”页面路由为 `/admin/analytics`，需要权限 `admin.analytics.read`。
+
 ### X-Profile-Key（匿名 profile）
 
 部分用户态数据（例如 plans、alerts）通过 `X-Profile-Key` 将“匿名 profile”与数据关联。前端会自动生成并持久化该值，并在请求时自动携带：
@@ -205,9 +210,20 @@ export EODHD_USE_FOR_SPX=false
 - **审计日志**：
   - 所有敏感操作（如用户创建、删除、权限变更、密码重置）均会记录在 `iam.audit_logs` 表中。
   - 超级管理员可通过前端界面查看审计日志。
+- **请求链路标识**：
+  - 后端会为每个请求生成/透传 `X-Request-Id` 并在响应头中返回，便于排查问题与审计关联。
+- **轻量行为看板（本项目内）**：
+  - 后端会对已登录用户的页面浏览与接口调用做轻量采集，用于管理员看板（不替代公司级统一埋点平台）。
+  - 权限：`admin.analytics.read`（默认授予 `admin` 与 `super_admin`）。
+  - 管理端接口：`GET /api/admin/analytics/summary?days=14`。
+  - 前端路由：`/admin/analytics`（菜单项“行为看板”）。
+  - 数据表：`analytics.page_views`（页面浏览），`analytics.api_calls`（接口调用）。
+  - 采集规则：仅记录已登录用户；过滤认证相关接口（如 `/api/auth/*`）与看板自身接口，避免数据噪声与循环上报。
 - **单点登录 (SSO)**：
   - 系统默认启用单点登录限制（同一账号同一端仅允许一个活跃会话）。
   - 登录时会自动踢出旧会话。
+
+> 数据库迁移说明：若你的数据库不是通过 `docker/postgresql/init/init.sql` 初始化的（例如已有存量库），需要手动执行 [migration_008_analytics.sql](file:///Users/kkkfcc/Desktop/stock-platform/docker/postgresql/init/migration_008_analytics.sql) 以创建 analytics 相关表结构并扩展审计字段。
 
 #### 4. 测试环境免登 (Dev/Test Only)
 

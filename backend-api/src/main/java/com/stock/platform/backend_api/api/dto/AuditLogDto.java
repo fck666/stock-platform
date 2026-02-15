@@ -13,5 +13,10 @@ public record AuditLogDto(
         String details,
         String ipAddress,
         String userAgent,
+        String requestId,
+        String httpMethod,
+        String route,
+        Integer statusCode,
+        Integer latencyMs,
         Instant createdAt
 ) {}

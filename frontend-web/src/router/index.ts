@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { auth } from '../auth/auth'
+import { recordPageView } from '../api/analytics'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,7 @@ const router = createRouter({
     { path: '/analysis', name: 'analysis', component: () => import('../views/AnalysisView.vue'), meta: { title: '股票分析' } },
     { path: '/sync', name: 'sync', component: () => import('../views/SyncView.vue'), meta: { requiresPermission: 'data.sync.execute', title: '数据同步' } },
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/admin/UserManagementView.vue'), meta: { requiresPermission: 'iam.manage', title: '用户管理' } },
+    { path: '/admin/analytics', name: 'adminAnalytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { requiresPermission: 'admin.analytics.read', title: '行为看板' } },
     { path: '/profile', name: 'profile', component: () => import('../views/profile/UserProfileView.vue'), meta: { title: '个人设置' } },
     { path: '/403', name: 'forbidden', component: () => import('../views/ForbiddenView.vue'), meta: { title: '权限不足' } },
   ],
@@ -26,6 +28,10 @@ router.afterEach((to) => {
     title = String(to.params.symbol).toUpperCase()
   }
   document.title = title ? `${title} - Stock Platform` : 'Stock Platform'
+  // 轻量页面浏览采集：仅登录用户；排除登录页避免无意义噪声
+  if (to.path !== '/login' && auth.ready.value && auth.isLoggedIn.value) {
+    recordPageView(to.path, title || undefined).catch(() => {})
+  }
 })
 
 router.beforeEach((to) => {

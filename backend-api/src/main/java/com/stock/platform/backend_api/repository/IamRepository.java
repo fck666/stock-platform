@@ -188,10 +188,33 @@ public class IamRepository {
         );
     }
 
-    public void insertAuditLog(UUID actorId, String actorUsername, UUID targetId, String targetUsername, String action, String details, String ip, String ua) {
+    public void insertAuditLog(
+            UUID actorId,
+            String actorUsername,
+            UUID targetId,
+            String targetUsername,
+            String action,
+            String detailsJson,
+            String ip,
+            String ua,
+            String requestId,
+            String httpMethod,
+            String route
+    ) {
+        // detailsJson 以 JSON 字符串形式传入并 cast 为 jsonb，便于结构化查询与前端展示
         String sql = """
-                insert into iam.audit_logs (actor_id, actor_username, target_id, target_username, action, details, ip_address, user_agent)
-                values (:actorId, :actorUsername, :targetId, :targetUsername, :action, to_jsonb(:details), :ip, :ua)
+                insert into iam.audit_logs (
+                    actor_id, actor_username, target_id, target_username,
+                    action, details, ip_address, user_agent,
+                    request_id, http_method, route
+                )
+                values (
+                    :actorId, :actorUsername, :targetId, :targetUsername,
+                    :action,
+                    case when :details is null then null::jsonb else cast(:details as jsonb) end,
+                    :ip, :ua,
+                    :requestId, :httpMethod, :route
+                )
                 """;
         jdbc.update(sql, new MapSqlParameterSource()
                 .addValue("actorId", actorId)
@@ -199,9 +222,12 @@ public class IamRepository {
                 .addValue("targetId", targetId)
                 .addValue("targetUsername", targetUsername)
                 .addValue("action", action)
-                .addValue("details", details)
+                .addValue("details", detailsJson)
                 .addValue("ip", ip)
                 .addValue("ua", ua)
+                .addValue("requestId", requestId)
+                .addValue("httpMethod", httpMethod)
+                .addValue("route", route)
         );
     }
 
@@ -369,7 +395,8 @@ public class IamRepository {
 
     public List<AuditLogRecord> listAuditLogs(int limit) {
         String sql = """
-                select id, actor_id, actor_username, target_id, target_username, action, details::text as details, ip_address, user_agent, created_at
+                select id, actor_id, actor_username, target_id, target_username, action, details::text as details,
+                       ip_address, user_agent, request_id, http_method, route, status_code, latency_ms, created_at
                 from iam.audit_logs
                 order by created_at desc
                 limit :limit
@@ -384,10 +411,31 @@ public class IamRepository {
                 rs.getString("details"),
                 rs.getString("ip_address"),
                 rs.getString("user_agent"),
+                rs.getString("request_id"),
+                rs.getString("http_method"),
+                rs.getString("route"),
+                rs.getObject("status_code") == null ? null : rs.getInt("status_code"),
+                rs.getObject("latency_ms") == null ? null : rs.getInt("latency_ms"),
                 rs.getTimestamp("created_at").toInstant()
         ));
     }
 
-    public record AuditLogRecord(UUID id, UUID actorId, String actorUsername, UUID targetId, String targetUsername, String action, String details, String ipAddress, String userAgent, Instant createdAt) {
+    public record AuditLogRecord(
+            UUID id,
+            UUID actorId,
+            String actorUsername,
+            UUID targetId,
+            String targetUsername,
+            String action,
+            String details,
+            String ipAddress,
+            String userAgent,
+            String requestId,
+            String httpMethod,
+            String route,
+            Integer statusCode,
+            Integer latencyMs,
+            Instant createdAt
+    ) {
     }
 }

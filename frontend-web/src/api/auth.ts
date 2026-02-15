@@ -54,6 +54,11 @@ export type AuditLogDto = {
   details: string | null
   ipAddress: string | null
   userAgent: string | null
+  requestId?: string | null
+  httpMethod?: string | null
+  route?: string | null
+  statusCode?: number | null
+  latencyMs?: number | null
   createdAt: string
 }
 

@@ -1,6 +1,7 @@
 package com.stock.platform.backend_api.config;
 
 import com.stock.platform.backend_api.security.BearerTokenAuthenticationFilter;
+import com.stock.platform.backend_api.security.RequestContextFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -32,6 +33,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
+            RequestContextFilter requestCtx,
             DevAutoAuthenticationFilter devAuto,
             BearerTokenAuthenticationFilter bearer
     ) throws Exception {
@@ -40,6 +42,7 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .addFilterBefore(requestCtx, DevAutoAuthenticationFilter.class)
                 .addFilterBefore(devAuto, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(bearer, UsernamePasswordAuthenticationFilter.class)
                 .build();

@@ -36,16 +36,19 @@ public class IamBootstrap implements ApplicationRunner {
         iam.ensurePermissionExists("admin.stock.write", "管理股票");
         iam.ensurePermissionExists("admin.index.write", "管理指数");
         iam.ensurePermissionExists("iam.manage", "管理账号与权限");
+        iam.ensurePermissionExists("admin.analytics.read", "查看行为看板");
 
         // Super Admin has all permissions (handled via logic or explicit grant)
         iam.ensureRolePermission("super_admin", "iam.manage");
         iam.ensureRolePermission("super_admin", "data.sync.execute");
         iam.ensureRolePermission("super_admin", "admin.stock.write");
         iam.ensureRolePermission("super_admin", "admin.index.write");
+        iam.ensureRolePermission("super_admin", "admin.analytics.read");
 
         iam.ensureRolePermission("admin", "data.sync.execute");
         iam.ensureRolePermission("admin", "admin.stock.write");
         iam.ensureRolePermission("admin", "admin.index.write");
+        iam.ensureRolePermission("admin", "admin.analytics.read");
         // Admin CANNOT manage IAM in the same way super_admin does, but they can view users.
         // We might need a separate permission for "iam.view" or just use "iam.manage" with service-level checks.
         // For now, let's NOT give 'iam.manage' to 'admin' role in DB, but rely on service check?

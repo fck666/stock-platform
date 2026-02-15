@@ -248,6 +248,11 @@ CREATE TABLE IF NOT EXISTS iam.audit_logs (
     details jsonb,
     ip_address text,
     user_agent text,
+    request_id text,
+    http_method text,
+    route text,
+    status_code int,
+    latency_ms int,
     created_at timestamptz not null default now()
 );
 
@@ -256,6 +261,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON iam.audit_logs (actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON iam.audit_logs (target_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON iam.audit_logs (action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON iam.audit_logs (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_route ON iam.audit_logs (route);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id ON iam.audit_logs (request_id);
 
 INSERT INTO iam.roles (code, name) VALUES ('super_admin', '超级管理员') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.roles (code, name) VALUES ('admin', '管理员') ON CONFLICT (code) DO NOTHING;
@@ -267,6 +274,7 @@ INSERT INTO iam.permissions (code, name) VALUES ('data.sync.execute', '执行数
 INSERT INTO iam.permissions (code, name) VALUES ('admin.stock.write', '管理股票') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.permissions (code, name) VALUES ('admin.index.write', '管理指数') ON CONFLICT (code) DO NOTHING;
 INSERT INTO iam.permissions (code, name) VALUES ('iam.manage', '管理账号与权限') ON CONFLICT (code) DO NOTHING;
+INSERT INTO iam.permissions (code, name) VALUES ('admin.analytics.read', '查看行为看板') ON CONFLICT (code) DO NOTHING;
 
 -- Grant permissions to Admin role (excluding IAM management which is restricted to Super Admin logically, though granted here for compatibility)
 -- Note: Super Admin permissions are handled via code logic (hasRole 'super_admin') or explicit grants if needed.
@@ -274,7 +282,7 @@ INSERT INTO iam.permissions (code, name) VALUES ('iam.manage', '管理账号与�
 INSERT INTO iam.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM iam.roles r, iam.permissions p
-WHERE r.code = 'admin' AND p.code IN ('data.sync.execute', 'admin.stock.write', 'admin.index.write', 'iam.manage')
+WHERE r.code = 'admin' AND p.code IN ('data.sync.execute', 'admin.stock.write', 'admin.index.write', 'iam.manage', 'admin.analytics.read')
 ON CONFLICT DO NOTHING;
 
 -- Grant all permissions to Super Admin explicitly
@@ -283,3 +291,35 @@ SELECT r.id, p.id
 FROM iam.roles r, iam.permissions p
 WHERE r.code = 'super_admin'
 ON CONFLICT DO NOTHING;
+
+create schema if not exists analytics;
+
+create table if not exists analytics.page_views (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid references iam.users (id) on delete set null,
+    username text,
+    path text not null,
+    title text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_page_views_created_at on analytics.page_views (created_at);
+create index if not exists idx_page_views_user on analytics.page_views (user_id);
+create index if not exists idx_page_views_path on analytics.page_views (path);
+
+create table if not exists analytics.api_calls (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid references iam.users (id) on delete set null,
+    username text,
+    method text not null,
+    path text not null,
+    status_code int not null,
+    latency_ms int not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_api_calls_created_at on analytics.api_calls (created_at);
+create index if not exists idx_api_calls_user on analytics.api_calls (user_id);
+create index if not exists idx_api_calls_path on analytics.api_calls (path);
+create index if not exists idx_api_calls_method_path on analytics.api_calls (method, path);
+create index if not exists idx_api_calls_status on analytics.api_calls (status_code);

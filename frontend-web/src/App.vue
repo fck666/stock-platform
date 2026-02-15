@@ -20,6 +20,7 @@ const active = computed(() => {
   if (route.path.startsWith('/analysis')) return '/analysis'
   if (route.path.startsWith('/sync')) return '/sync'
   if (route.path.startsWith('/admin/users')) return '/admin/users'
+  if (route.path.startsWith('/admin/analytics')) return '/admin/analytics'
   return '/'
 })
 
@@ -53,6 +54,7 @@ async function handleLogout() {
           <el-menu-item v-if="auth.isLoggedIn.value" index="/analysis">股票分析</el-menu-item>
           <el-menu-item v-if="auth.hasPermission('data.sync.execute')" index="/sync">数据同步</el-menu-item>
           <el-menu-item v-if="auth.hasPermission('iam.manage')" index="/admin/users">用户管理</el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('admin.analytics.read')" index="/admin/analytics">行为看板</el-menu-item>
         </el-menu>
         <div style="display: flex; align-items: center; gap: 8px">
           <div v-if="auth.isLoggedIn.value">

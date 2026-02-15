@@ -4,6 +4,8 @@ import com.stock.platform.backend_api.api.dto.AuditLogDto;
 import com.stock.platform.backend_api.api.dto.CreateUserRequestDto;
 import com.stock.platform.backend_api.repository.IamRepository;
 import com.stock.platform.backend_api.security.AuthUser;
+import com.stock.platform.backend_api.security.RequestContextHolder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -18,10 +20,37 @@ import java.util.UUID;
 public class IamUserService {
     private final IamRepository iam;
     private final PasswordEncoder passwordEncoder;
+    private final ObjectMapper objectMapper;
 
-    public IamUserService(IamRepository iam, PasswordEncoder passwordEncoder) {
+    public IamUserService(IamRepository iam, PasswordEncoder passwordEncoder, ObjectMapper objectMapper) {
         this.iam = iam;
         this.passwordEncoder = passwordEncoder;
+        this.objectMapper = objectMapper;
+    }
+
+    private String json(Object v) {
+        try {
+            return objectMapper.writeValueAsString(v);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void audit(UUID actorId, String actorUsername, UUID targetId, String targetUsername, String action, Object details) {
+        var ctx = RequestContextHolder.get().orElse(null);
+        iam.insertAuditLog(
+                actorId,
+                actorUsername,
+                targetId,
+                targetUsername,
+                action,
+                json(details),
+                ctx == null ? null : ctx.ipAddress(),
+                ctx == null ? null : ctx.userAgent(),
+                ctx == null ? null : ctx.requestId(),
+                ctx == null ? null : ctx.httpMethod(),
+                ctx == null ? null : ctx.route()
+        );
     }
 
     private AuthUser getCurrentUser() {
@@ -105,7 +134,8 @@ public class IamUserService {
             iam.ensureUserRole(newUser.userId(), "viewer"); // Default role
         }
 
-        iam.insertAuditLog(actor.userId(), actor.username(), newUser.userId(), newUser.username(), "CREATE_USER", "Created user " + req.username(), "unknown", "unknown");
+        audit(actor.userId(), actor.username(), newUser.userId(), newUser.username(), "CREATE_USER",
+                java.util.Map.of("username", req.username(), "roles", req.roles()));
     }
 
     @Transactional
@@ -144,7 +174,8 @@ public class IamUserService {
         }
 
         iam.replaceUserRoles(userId, roles);
-        iam.insertAuditLog(actor.userId(), actor.username(), target.userId(), target.username(), "UPDATE_ROLES", "Roles: " + roles, "unknown", "unknown");
+        audit(actor.userId(), actor.username(), target.userId(), target.username(), "UPDATE_ROLES",
+                java.util.Map.of("roles", roles));
     }
 
     @Transactional
@@ -176,7 +207,8 @@ public class IamUserService {
             // For now, let's revoke for "desktop" as it is default.
             // TODO: revoke all client types
         }
-        iam.insertAuditLog(actor.userId(), actor.username(), target.userId(), target.username(), "UPDATE_STATUS", "Status: " + status, "unknown", "unknown");
+        audit(actor.userId(), actor.username(), target.userId(), target.username(), "UPDATE_STATUS",
+                java.util.Map.of("status", status));
     }
 
     @Transactional
@@ -199,7 +231,8 @@ public class IamUserService {
         // Force logout target
         iam.revokeActiveRefreshTokens(userId, "desktop");
 
-        iam.insertAuditLog(actor.userId(), actor.username(), target.userId(), target.username(), "RESET_PASSWORD", "Reset password", "unknown", "unknown");
+        audit(actor.userId(), actor.username(), target.userId(), target.username(), "RESET_PASSWORD",
+                java.util.Map.of());
     }
     
     @Transactional
@@ -220,7 +253,8 @@ public class IamUserService {
         // For security, good to revoke others.
         iam.revokeActiveRefreshTokens(actorAuth.userId(), "desktop");
         
-        iam.insertAuditLog(actorAuth.userId(), actorAuth.username(), actorAuth.userId(), actorAuth.username(), "CHANGE_PASSWORD", "Changed own password", "unknown", "unknown");
+        audit(actorAuth.userId(), actorAuth.username(), actorAuth.userId(), actorAuth.username(), "CHANGE_PASSWORD",
+                java.util.Map.of());
     }
 
     @Transactional
@@ -245,7 +279,8 @@ public class IamUserService {
         }
 
         iam.deleteUser(userId);
-        iam.insertAuditLog(actor.userId(), actor.username(), target.userId(), target.username(), "DELETE_USER", "Deleted user", "unknown", "unknown");
+        audit(actor.userId(), actor.username(), target.userId(), target.username(), "DELETE_USER",
+                java.util.Map.of());
     }
 
     public List<AuditLogDto> listAuditLogs(int limit) {
@@ -265,6 +300,11 @@ public class IamUserService {
                         r.details(),
                         r.ipAddress(),
                         r.userAgent(),
+                        r.requestId(),
+                        r.httpMethod(),
+                        r.route(),
+                        r.statusCode(),
+                        r.latencyMs(),
                         r.createdAt()
                 ))
                 .toList();
